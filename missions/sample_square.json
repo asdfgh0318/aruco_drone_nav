@@ -1,0 +1,58 @@
+{
+  "mission_id": "sample_square_001",
+  "waypoints": [
+    {
+      "x": 0.0,
+      "y": 0.0,
+      "z": 1.5,
+      "yaw": 0,
+      "hold_time": 3.0,
+      "name": "Start/Home"
+    },
+    {
+      "x": 1.5,
+      "y": 0.0,
+      "z": 1.5,
+      "yaw": 0,
+      "hold_time": 2.0,
+      "name": "Point A"
+    },
+    {
+      "x": 1.5,
+      "y": 1.5,
+      "z": 1.5,
+      "yaw": 90,
+      "hold_time": 2.0,
+      "name": "Point B"
+    },
+    {
+      "x": 0.0,
+      "y": 1.5,
+      "z": 1.5,
+      "yaw": 180,
+      "hold_time": 2.0,
+      "name": "Point C"
+    },
+    {
+      "x": 0.0,
+      "y": 0.0,
+      "z": 1.5,
+      "yaw": 270,
+      "hold_time": 3.0,
+      "name": "Return Home"
+    }
+  ],
+  "settings": {
+    "max_speed": 0.3,
+    "position_tolerance": 0.15,
+    "yaw_tolerance": 10.0,
+    "takeoff_altitude": 1.0,
+    "landing_speed": 0.2
+  },
+  "metadata": {
+    "description": "Simple 1.5m square pattern flight for testing",
+    "author": "ArUco Nav System",
+    "created": "2024-01-14",
+    "notes": "Requires markers at corners and center for best coverage"
+  }
+}

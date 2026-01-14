@@ -1,0 +1,45 @@
+# ArUco Drone Navigation System Configuration
+
+serial:
+  port: "/dev/serial0"          # RPi UART port (or /dev/ttyAMA0)
+  baud: 921600                   # MAVLink baud rate
+
+camera:
+  device_id: 0                   # USB camera device ID
+  width: 640                     # Frame width (reduce for better performance)
+  height: 480                    # Frame height
+  fps: 30                        # Target FPS
+
+aruco:
+  dictionary: "DICT_6X6_250"     # ArUco dictionary type
+  marker_size_m: 0.20            # Physical marker size in meters (20cm)
+
+control:
+  # Position controller gains
+  position_kp: 0.5               # Proportional gain for position error
+  position_ki: 0.0               # Integral gain (start with 0)
+  position_kd: 0.1               # Derivative gain for damping
+
+  # Velocity limits
+  max_velocity_xy: 0.5           # Max horizontal velocity (m/s)
+  max_velocity_z: 0.3            # Max vertical velocity (m/s)
+  max_yaw_rate: 30.0             # Max yaw rate (deg/s)
+
+  # Navigation tolerances
+  position_tolerance: 0.10       # Position reached threshold (meters)
+  yaw_tolerance: 5.0             # Yaw reached threshold (degrees)
+
+  # Control loop rate
+  loop_rate_hz: 20               # Main control loop frequency
+
+safety:
+  max_altitude: 2.5              # Maximum allowed altitude (meters)
+  min_altitude: 0.3              # Minimum safe altitude (meters)
+  marker_loss_timeout: 2.0       # Seconds without marker before failsafe
+  geofence_radius: 5.0           # Maximum distance from origin (meters)
+  low_battery_voltage: 10.5      # Trigger landing below this voltage (3S)
+
+logging:
+  level: "INFO"                  # DEBUG, INFO, WARNING, ERROR
+  file: "flight_log.txt"         # Log file name
+  record_rate_hz: 10             # Flight recording sample rate

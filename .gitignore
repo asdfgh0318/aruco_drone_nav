@@ -1,0 +1,71 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Recordings (large files)
+recordings/*.json
+
+# Temporary files
+*.tmp
+*.temp
+/tmp/
+
+# Generated markers (can be regenerated)
+markers/*.png
+markers/*.pdf
+
+# Camera calibration images
+calibration_images/
+
+# Logs
+*.log
+flight_log.txt
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Keep empty directories
+!recordings/.gitkeep
+!missions/.gitkeep
+!markers/.gitkeep

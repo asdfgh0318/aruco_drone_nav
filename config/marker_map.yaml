@@ -1,0 +1,54 @@
+# ArUco Marker Map Configuration
+# Maps marker IDs to their world coordinates (ceiling positions)
+#
+# Coordinate system:
+#   X: East (positive)
+#   Y: North (positive)
+#   Z: Up (positive) - this is the ceiling height
+#
+# Origin (0, 0, 0) is typically on the floor at the starting position
+
+# World origin definition (for reference)
+origin:
+  description: "Starting position on the floor"
+  x: 0.0
+  y: 0.0
+  z: 0.0
+
+# Ceiling height (approximate, markers have individual Z values)
+ceiling_height: 3.0
+
+# Marker definitions
+markers:
+  # Example: Single marker for Phase 1 testing
+  - id: 0
+    position: [0.0, 0.0, 3.0]      # Directly above origin
+    orientation: 0                  # Marker rotation (degrees, clockwise from North)
+    description: "Origin marker - starting position"
+
+  # Additional markers for Phase 2 (uncomment and configure as needed)
+  # - id: 1
+  #   position: [2.0, 0.0, 3.0]
+  #   orientation: 0
+  #   description: "East corridor marker"
+
+  # - id: 2
+  #   position: [2.0, 2.0, 3.0]
+  #   orientation: 0
+  #   description: "Northeast corner marker"
+
+  # - id: 3
+  #   position: [0.0, 2.0, 3.0]
+  #   orientation: 0
+  #   description: "North corridor marker"
+
+  # - id: 4
+  #   position: [1.0, 1.0, 3.0]
+  #   orientation: 0
+  #   description: "Center marker"
+
+# Marker placement guidelines:
+# - Ensure markers overlap in coverage (drone can see multiple)
+# - Place markers 1-2 meters apart for redundancy
+# - All markers should be flat on ceiling, facing down
+# - Measure positions accurately from the defined origin

@@ -1,0 +1,19 @@
+# ArUco Drone Navigation System Dependencies
+
+# Computer Vision
+opencv-python>=4.5.0
+opencv-contrib-python>=4.5.0  # Required for ArUco module
+
+# MAVLink Communication
+pymavlink>=2.4.0
+
+# Core utilities
+numpy>=1.20.0
+PyYAML>=6.0
+
+# For marker PDF generation
+reportlab>=4.0.0
+
+# Optional: For RPi Zero, use headless opencv instead:
+# opencv-python-headless>=4.5.0
+# opencv-contrib-python-headless>=4.5.0
