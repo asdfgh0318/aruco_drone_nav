@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Debug GUI Guide - ArUco Drone Navigation</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <nav>
+        <div class="container">
+            <a href="index.html" class="logo">ArUco<span>Nav</span></a>
+            <ul>
+                <li><a href="index.html">Home</a></li>
+                <li><a href="gui-guide.html" class="active">Debug GUI</a></li>
+                <li><a href="calibration.html">Calibration</a></li>
+                <li><a href="https://github.com/asdfgh0318/aruco_drone_nav">GitHub</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <main>
+        <h1>Debug GUI Guide</h1>
+        <p>The Debug GUI is a real-time visualization tool for testing and debugging the ArUco navigation system. It runs on your local development machine and connects to the RPi camera server over the network.</p>
+
+        <h2>Features</h2>
+        <ul>
+            <li><strong>Live Video Stream</strong> - Real-time MJPEG video with marker detection overlay</li>
+            <li><strong>Telemetry Panel</strong> - Position, distance, yaw, and detection statistics</li>
+            <li><strong>Marker Map</strong> - Top-down visualization of detected markers</li>
+            <li><strong>Recording</strong> - Save trajectory and marker positions to JSON</li>
+        </ul>
+
+        <h2>GUI Layout</h2>
+        <div class="diagram">
+<pre>
++-------------------------------------------------------------+
+|  ArUco Debug GUI                                    [_][X]  |
++---------------------------------+---------------------------+
+|                                 |  TELEMETRY                |
+|     LIVE VIDEO FEED             |  -------------------------+
+|     (640x480)                   |  Markers: 2 detected      |
+|                                 |  ID 1: 0.53m, yaw -10     |
+|     [Marker overlay]            |  ID 3: 1.20m, yaw +5      |
+|     [Pose axes]                 |                           |
+|     [Distance text]             |  POSITION                 |
+|                                 |  Forward:  +0.12m         |
+|                                 |  Right:    +0.06m         |
+|     FPS: 15.2                   |  Altitude:  0.52m         |
+|                                 |  Yaw:      -10.1          |
++---------------------------------+---------------------------+
+|  MARKER MAP (Top-Down View)                                 |
+|  +-------------------------------------------------------+  |
+|  |     [1]                              [3]              |  |
+|  |       .                                .              |  |
+|  |                    ^                                  |  |
+|  |                   /|\  <- Camera                      |  |
+|  |                                                       |  |
+|  +-------------------------------------------------------+  |
+|  [Record] [Stop] [Save Map] [Load Map]     Scale: 1m=50px   |
++-------------------------------------------------------------+
+</pre>
+        </div>
+
+        <h2>Prerequisites</h2>
+        <p>Install required Python packages on your local machine:</p>
+        <pre><code>sudo apt install python3-tk python3-pil python3-pil.imagetk
+pip install opencv-python numpy pyyaml</code></pre>
+
+        <h2>Starting the System</h2>
+
+        <h3>Step 1: Start Camera Server on RPi</h3>
+        <pre><code># SSH into the RPi
+ssh pi@10.156.64.251
+
+# Navigate to project directory
+cd /home/pi/aruco_drone_nav
+
+# Start the camera server
+python3 tools/camera_server.py --port 8000</code></pre>
+
+        <p>You should see output like:</p>
+        <pre><code>Camera server starting...
+Camera opened: 640x480 @ 30fps
+Server listening on 0.0.0.0:8000
+Endpoints:
+  /stream - MJPEG video stream
+  /frame  - Single JPEG frame
+  /status - Server status (JSON)</code></pre>
+
+        <h3>Step 2: Launch Debug GUI</h3>
+        <pre><code># On your local machine
+python3 tools/debug_gui.py --host 10.156.64.251 --port 8000</code></pre>
+
+        <h3>Command Line Options</h3>
+        <table>
+            <tr>
+                <th>Option</th>
+                <th>Default</th>
+                <th>Description</th>
+            </tr>
+            <tr>
+                <td><code>--host</code></td>
+                <td>10.156.64.251</td>
+                <td>RPi camera server IP address</td>
+            </tr>
+            <tr>
+                <td><code>--port</code></td>
+                <td>8000</td>
+                <td>Camera server port</td>
+            </tr>
+            <tr>
+                <td><code>--marker-size</code></td>
+                <td>0.20</td>
+                <td>Marker size in meters</td>
+            </tr>
+            <tr>
+                <td><code>--dictionary</code></td>
+                <td>DICT_6X6_250</td>
+                <td>ArUco dictionary type</td>
+            </tr>
+        </table>
+
+        <h2>Understanding the Display</h2>
+
+        <h3>Video Panel</h3>
+        <ul>
+            <li><strong>Green corners</strong> - Detected marker corners</li>
+            <li><strong>Red/Green/Blue axes</strong> - Marker coordinate frame (X/Y/Z)</li>
+            <li><strong>Distance text</strong> - Distance to each marker in meters</li>
+            <li><strong>FPS counter</strong> - Current frame rate</li>
+        </ul>
+
+        <h3>Telemetry Panel</h3>
+        <ul>
+            <li><strong>Markers Detected</strong> - Number of markers currently visible</li>
+            <li><strong>Marker List</strong> - ID, distance, and yaw for each marker</li>
+            <li><strong>Position</strong> - Relative position to primary marker:
+                <ul>
+                    <li>Forward/Back (X axis)</li>
+                    <li>Left/Right (Y axis)</li>
+                    <li>Altitude (Z axis - distance to marker)</li>
+                    <li>Yaw (rotation around Z axis)</li>
+                </ul>
+            </li>
+            <li><strong>Detection Rate</strong> - Percentage of frames with marker detection</li>
+        </ul>
+
+        <h3>Marker Map</h3>
+        <p>Top-down view showing:</p>
+        <ul>
+            <li>Detected markers as numbered squares</li>
+            <li>Camera position as a triangle</li>
+            <li>Camera orientation as a line indicating heading</li>
+            <li>Grid overlay with scale reference</li>
+        </ul>
+
+        <h2>Recording Functionality</h2>
+
+        <h3>Recording a Session</h3>
+        <ol>
+            <li>Click <strong>[Record]</strong> to start recording</li>
+            <li>Move the camera/drone around to detect markers</li>
+            <li>Click <strong>[Stop]</strong> to end recording</li>
+            <li>Recording is saved to <code>recordings/session_YYYYMMDD_HHMMSS.json</code></li>
+        </ol>
+
+        <h3>Recording Format</h3>
+        <pre><code>{
+  "metadata": {
+    "start_time": "2026-01-23T12:00:00",
+    "duration_sec": 120.5,
+    "calibration": "camera_params.yaml"
+  },
+  "markers_discovered": {
+    "1": {"world_pos": [0.0, 0.0, 0.0], "first_seen": 0.5},
+    "3": {"world_pos": [1.0, 0.0, 0.0], "first_seen": 12.3}
+  },
+  "trajectory": [
+    {"t": 0.0, "x": 0.12, "y": 0.06, "z": 0.52, "yaw": -10.1, "markers": [1]},
+    {"t": 0.1, "x": 0.13, "y": 0.07, "z": 0.51, "yaw": -9.8, "markers": [1, 3]}
+  ]
+}</code></pre>
+
+        <h3>Saving Marker Maps</h3>
+        <p>Click <strong>[Save Map]</strong> to export discovered marker positions to <code>config/marker_map.yaml</code>. This can be used for multi-marker navigation.</p>
+
+        <h2>Keyboard Shortcuts</h2>
+        <table>
+            <tr>
+                <th>Key</th>
+                <th>Action</th>
+            </tr>
+            <tr>
+                <td><code>R</code></td>
+                <td>Start/Stop recording</td>
+            </tr>
+            <tr>
+                <td><code>S</code></td>
+                <td>Save screenshot</td>
+            </tr>
+            <tr>
+                <td><code>M</code></td>
+                <td>Save marker map</td>
+            </tr>
+            <tr>
+                <td><code>Q</code> / <code>Esc</code></td>
+                <td>Quit application</td>
+            </tr>
+        </table>
+
+        <h2>Troubleshooting</h2>
+
+        <h3>No Video Stream</h3>
+        <ul>
+            <li>Verify camera server is running on RPi: <code>curl http://10.156.64.251:8000/status</code></li>
+            <li>Check network connectivity: <code>ping 10.156.64.251</code></li>
+            <li>Ensure firewall allows port 8000</li>
+        </ul>
+
+        <h3>Low Detection Rate</h3>
+        <ul>
+            <li>Improve lighting conditions</li>
+            <li>Ensure markers are flat (not curved)</li>
+            <li>Verify marker size matches <code>--marker-size</code> parameter</li>
+            <li>Run camera calibration for better accuracy</li>
+        </ul>
+
+        <h3>Laggy Video</h3>
+        <ul>
+            <li>Network bandwidth issue - try wired connection</li>
+            <li>Reduce resolution on camera server</li>
+            <li>Close other bandwidth-intensive applications</li>
+        </ul>
+
+        <div class="tip">
+            <strong>Tip:</strong> For best results, ensure the markers are well-lit with diffuse lighting. Direct sunlight or shadows can significantly reduce detection rate.
+        </div>
+
+        <h2>Example Screenshot</h2>
+        <p>Detection of ArUco marker ID 1 at approximately 0.53m distance:</p>
+        <img src="../detected_marker.jpg" alt="ArUco Marker Detection" class="screenshot">
+        <p><em>The green overlay shows detected marker corners, with pose axes (RGB = XYZ) indicating the marker's orientation.</em></p>
+    </main>
+
+    <footer>
+        <p>ArUco Drone Navigation System &copy; 2026 Warsaw University of Technology</p>
+        <p>Authors: Adam Koszalka &amp; Claude Code</p>
+    </footer>
+</body>
+</html>

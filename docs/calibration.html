@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Camera Calibration - ArUco Drone Navigation</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <nav>
+        <div class="container">
+            <a href="index.html" class="logo">ArUco<span>Nav</span></a>
+            <ul>
+                <li><a href="index.html">Home</a></li>
+                <li><a href="gui-guide.html">Debug GUI</a></li>
+                <li><a href="calibration.html" class="active">Calibration</a></li>
+                <li><a href="https://github.com/asdfgh0318/aruco_drone_nav">GitHub</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <main>
+        <h1>Camera Calibration Guide</h1>
+        <p>Camera calibration is essential for accurate pose estimation. This guide explains how to calibrate your camera using the chessboard pattern.</p>
+
+        <h2>Why Calibrate?</h2>
+        <p>Camera calibration determines:</p>
+        <ul>
+            <li><strong>Intrinsic parameters</strong> - Focal length (fx, fy) and optical center (cx, cy)</li>
+            <li><strong>Distortion coefficients</strong> - Lens distortion correction (radial and tangential)</li>
+        </ul>
+        <p>Without proper calibration, pose estimation will be inaccurate, leading to navigation errors.</p>
+
+        <h2>Calibration Pattern</h2>
+        <p>The system uses a 9x6 chessboard pattern (inner corners).</p>
+
+        <h3>Printing the Pattern</h3>
+        <ol>
+            <li>Open <code>markers/chessboard_9x6.pdf</code></li>
+            <li>Print at <strong>100% scale</strong> (no scaling)</li>
+            <li>Mount on a flat, rigid surface (cardboard, foam board)</li>
+            <li>Verify square size is 25mm (measure with ruler)</li>
+        </ol>
+
+        <div class="warning">
+            <strong>Important:</strong> The chessboard must be completely flat. Any warping will introduce calibration errors.
+        </div>
+
+        <h2>Remote Calibration (Recommended)</h2>
+        <p>Calibrate the RPi camera over the network without needing physical access.</p>
+
+        <h3>Prerequisites</h3>
+        <ol>
+            <li>Camera server running on RPi</li>
+            <li>Printed chessboard pattern</li>
+            <li>Network connection to RPi</li>
+        </ol>
+
+        <h3>Step 1: Start Camera Server</h3>
+        <pre><code>ssh pi@10.156.64.251
+cd /home/pi/aruco_drone_nav
+python3 tools/camera_server.py --port 8000</code></pre>
+
+        <h3>Step 2: Run Calibration Tool</h3>
+        <pre><code>python3 tools/calibrate_remote.py --host 10.156.64.251 --port 8000</code></pre>
+
+        <h3>Step 3: Capture Calibration Images</h3>
+        <ol>
+            <li>Hold the chessboard in view of the camera</li>
+            <li>When corners are detected, they appear <strong style="color: green;">GREEN</strong></li>
+            <li>Press <strong>SPACE</strong> to capture the frame</li>
+            <li>Move the board to different positions and angles</li>
+            <li>Capture at least <strong>10 images</strong> from various angles</li>
+        </ol>
+
+        <h3>Recommended Capture Positions</h3>
+        <ul>
+            <li>Center of frame, parallel to camera</li>
+            <li>Left side of frame</li>
+            <li>Right side of frame</li>
+            <li>Top of frame</li>
+            <li>Bottom of frame</li>
+            <li>Tilted left (20-30 degrees)</li>
+            <li>Tilted right (20-30 degrees)</li>
+            <li>Tilted up (20-30 degrees)</li>
+            <li>Tilted down (20-30 degrees)</li>
+            <li>Close to camera (fills 80% of frame)</li>
+            <li>Far from camera (fills 30% of frame)</li>
+        </ul>
+
+        <div class="tip">
+            <strong>Tip:</strong> Cover the entire field of view with captures. This ensures accurate distortion correction across the whole image.
+        </div>
+
+        <h3>Step 4: Run Calibration</h3>
+        <ol>
+            <li>After capturing 10+ images, press <strong>C</strong> to calibrate</li>
+            <li>Calibration computes camera matrix and distortion coefficients</li>
+            <li>Results are saved to <code>config/camera_params.yaml</code></li>
+            <li>Calibration is automatically deployed to RPi</li>
+        </ol>
+
+        <h2>Understanding Results</h2>
+
+        <h3>Reprojection Error</h3>
+        <p>The calibration outputs a reprojection error (in pixels):</p>
+        <table>
+            <tr>
+                <th>Error</th>
+                <th>Quality</th>
+            </tr>
+            <tr>
+                <td>&lt; 0.5 px</td>
+                <td>Excellent</td>
+            </tr>
+            <tr>
+                <td>0.5 - 1.0 px</td>
+                <td>Good</td>
+            </tr>
+            <tr>
+                <td>1.0 - 2.0 px</td>
+                <td>Acceptable</td>
+            </tr>
+            <tr>
+                <td>&gt; 2.0 px</td>
+                <td>Poor - recalibrate</td>
+            </tr>
+        </table>
+
+        <h3>Camera Matrix</h3>
+        <pre><code>Camera matrix:
+  fx = 417.08   # Focal length X (pixels)
+  fy = 417.00   # Focal length Y (pixels)
+  cx = 318.27   # Optical center X
+  cy = 275.27   # Optical center Y</code></pre>
+
+        <p>For a 640x480 image, the optical center should be near (320, 240).</p>
+
+        <h3>Distortion Coefficients</h3>
+        <pre><code>Distortion: [k1, k2, p1, p2, k3]
+  k1, k2, k3 = Radial distortion
+  p1, p2 = Tangential distortion</code></pre>
+
+        <h2>Calibration File Format</h2>
+        <p>The calibration is saved in OpenCV-compatible YAML format:</p>
+        <pre><code>calibration_info:
+  date: '2026-01-23T00:18:15'
+  num_images: 10
+  reprojection_error: 3.41
+  image_width: 640
+  image_height: 480
+
+camera_matrix:
+  rows: 3
+  cols: 3
+  data: [417.08, 0.0, 318.27,
+         0.0, 417.00, 275.27,
+         0.0, 0.0, 1.0]
+
+distortion_coefficients:
+  rows: 1
+  cols: 5
+  data: [-0.464, 0.283, -0.012, 0.011, -0.135]</code></pre>
+
+        <h2>Local Calibration</h2>
+        <p>If you have direct access to the camera (USB connected to your machine):</p>
+        <pre><code>python3 tools/calibrate_camera.py --camera 0 --output config/camera_params.yaml</code></pre>
+
+        <h2>Verifying Calibration</h2>
+        <p>After calibration, verify improved accuracy:</p>
+        <ol>
+            <li>Run the Debug GUI</li>
+            <li>Place a marker at a known distance (e.g., 0.50m)</li>
+            <li>Verify the reported distance matches actual distance</li>
+            <li>Move marker around - distance should remain consistent</li>
+        </ol>
+
+        <h2>Troubleshooting</h2>
+
+        <h3>Corners Not Detected</h3>
+        <ul>
+            <li>Improve lighting (avoid shadows)</li>
+            <li>Ensure entire chessboard is visible in frame</li>
+            <li>Make sure pattern is flat</li>
+            <li>Check for reflections on glossy paper</li>
+        </ul>
+
+        <h3>High Reprojection Error</h3>
+        <ul>
+            <li>Recalibrate with more images (15-20)</li>
+            <li>Ensure chessboard is perfectly flat</li>
+            <li>Avoid motion blur - hold pattern steady</li>
+            <li>Cover more of the field of view</li>
+            <li>Include more tilted angles</li>
+        </ul>
+
+        <h3>Inaccurate Distance Measurements</h3>
+        <ul>
+            <li>Verify marker size matches <code>--marker-size</code> parameter</li>
+            <li>Check that calibration loaded correctly</li>
+            <li>Recalibrate if error is too high</li>
+        </ul>
+
+        <div class="note">
+            <strong>Current Calibration:</strong> The system was calibrated on 2026-01-23 with reprojection error of 3.41 pixels. This is higher than ideal and could be improved by recalibrating with more images in better lighting conditions.
+        </div>
+    </main>
+
+    <footer>
+        <p>ArUco Drone Navigation System &copy; 2026 Warsaw University of Technology</p>
+        <p>Authors: Adam Koszalka &amp; Claude Code</p>
+    </footer>
+</body>
+</html>

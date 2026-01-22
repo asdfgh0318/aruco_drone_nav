@@ -106,6 +106,17 @@
 - [x] README documentation
 - [x] Technical documentation
 
+### Session 2026-01-23: RPi Deployment & Debug Tools ✓
+- [x] Deploy system to RPi Zero 2W (10.156.64.251)
+- [x] Test USB camera (640x480 @ 15 FPS)
+- [x] Verify ArUco detection on RPi (DICT_6X6_250, ID 1)
+- [x] Position estimation working (~0.53m distance)
+- [x] Create MJPEG camera streaming server (`tools/camera_server.py`)
+- [x] Create Debug GUI with video/telemetry/marker map (`tools/debug_gui.py`)
+- [x] Create remote calibration tool (`tools/calibrate_remote.py`)
+- [x] Camera calibration completed (fx=417, fy=417, reprojection error=3.41)
+- [x] HTML documentation site
+
 ---
 
 ## Notes
@@ -123,4 +134,4 @@ For 60° FOV camera at 1.5m flight altitude:
 
 ---
 
-*Last updated: 2024-01-14*
+*Last updated: 2026-01-23*

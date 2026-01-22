@@ -36,29 +36,140 @@ This system provides:
 - **Markers**: Printed ArUco markers (20cm recommended) mounted on ceiling
 - **Connection**: UART serial between RPi and flight controller
 
-## Installation
+## Quick Start
 
-### 1. Clone Repository
+### Desktop Testing (Development Machine)
+
 ```bash
+# Clone and setup
 git clone https://github.com/asdfgh0318/aruco_drone_nav.git
 cd aruco_drone_nav
-```
-
-### 2. Install Dependencies
-```bash
-# On development machine
+python3 -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
 
-# On Raspberry Pi Zero (use headless OpenCV)
-pip install opencv-python-headless opencv-contrib-python-headless
-pip install pymavlink numpy PyYAML reportlab
+# Generate test targets
+python3 tools/generate_markers.py --ids 0,1,2,3,4 --size 20 --output markers/
+python3 tools/generate_chessboard.py --output markers/
+
+# Print markers/markers_DICT_6X6_250.pdf at 100% scale
+
+# Calibrate camera
+python3 tools/calibrate_camera.py --camera 0
+
+# Test detection
+python3 tools/test_aruco_detection.py --camera 0 --marker-size 0.20
+
+# Run bench test (shows position + velocity commands)
+python3 tools/bench_test.py --camera 0 --marker-size 0.20
+
+# Launch GUI configurator
+sudo apt-get install python3-tk  # if needed
+python3 tools/configurator_gui.py
 ```
 
-### 3. Configure System
-Edit `config/system_config.yaml`:
+### Raspberry Pi Deployment
+
+Two options available:
+
+| Option | Best for | Image size | Boot time |
+|--------|----------|------------|-----------|
+| [Raspbian Setup](rpi_setup/README.md) | Quick testing | ~2GB | ~60s |
+| [Buildroot Image](buildroot/README.md) | Production | ~100MB | ~5s |
+
+**Option A: Standard Raspbian** (easy, for development)
+```bash
+# On fresh Raspberry Pi OS, run:
+curl -sSL https://raw.githubusercontent.com/asdfgh0318/aruco_drone_nav/main/rpi_setup/setup_rpi.sh | sudo bash
+sudo reboot
+```
+
+**Option B: Minimal Buildroot** (bulletproof, for production)
+```bash
+cd buildroot
+./build.sh  # Takes 30-60 min first time
+# Flash output image to SD card
+```
+
+See [docs/TESTING.md](docs/TESTING.md) for complete testing guide.
+
+## Tools
+
+| Tool | Description | Usage |
+|------|-------------|-------|
+| `debug_gui.py` | **Debug GUI with live video, telemetry, marker map** | `python3 tools/debug_gui.py` |
+| `camera_server.py` | MJPEG streaming server (runs on RPi) | `python3 tools/camera_server.py` |
+| `calibrate_remote.py` | Network-based camera calibration | `python3 tools/calibrate_remote.py` |
+| `calibrate_camera.py` | Local camera intrinsic calibration | `python3 tools/calibrate_camera.py` |
+| `test_aruco_detection.py` | Live marker detection test | `python3 tools/test_aruco_detection.py` |
+| `bench_test.py` | Position error + velocity commands | `python3 tools/bench_test.py` |
+| `test_mavlink.py` | MAVLink connection test | `python3 tools/test_mavlink.py` |
+| `generate_markers.py` | Create printable ArUco markers | `python3 tools/generate_markers.py` |
+| `generate_chessboard.py` | Create calibration pattern | `python3 tools/generate_chessboard.py` |
+| `configurator_gui.py` | GUI for testing/configuration | `python3 tools/configurator_gui.py` |
+
+## Debug GUI (Network Streaming)
+
+The Debug GUI provides real-time visualization when testing with the RPi remotely.
+
+### Architecture
+```
+RPi (10.156.64.251)                    Local Machine
+┌─────────────────┐                    ┌─────────────────┐
+│ camera_server.py│ ──── MJPEG ─────>  │ debug_gui.py    │
+│ - Capture frames│      Port 8000     │ - Display video │
+│ - JPEG compress │                    │ - Run detection │
+└─────────────────┘                    │ - Show telemetry│
+                                       └─────────────────┘
+```
+
+### Usage
+```bash
+# On RPi: Start camera server
+python3 tools/camera_server.py --port 8000
+
+# On local machine: Launch debug GUI
+python3 tools/debug_gui.py --host 10.156.64.251 --port 8000
+```
+
+### Features
+- **Live Video**: Real-time stream with marker detection overlay
+- **Telemetry Panel**: Marker IDs, distances, positions, yaw angles
+- **Marker Map**: Top-down visualization of detected markers
+- **Recording**: Save trajectory and marker positions to JSON
+
+### Remote Calibration
+```bash
+# Calibrate camera over network (show chessboard to camera)
+python3 tools/calibrate_remote.py --host 10.156.64.251 --port 8000
+```
+
+## Running the System
+
+### Ground Test Mode (No Flight)
+Test detection and control calculations without arming:
+```bash
+python3 -m src.main --mode ground_test --config config/system_config.yaml
+```
+
+### Phase 1: Single Marker Hover
+Hover under a single marker with position hold:
+```bash
+python3 -m src.main --mode hover --altitude 1.5
+```
+
+### Phase 2: Mission Execution
+Execute a mission from JSON file:
+```bash
+python3 -m src.main --mode mission --mission missions/sample_square.json
+```
+
+## Configuration
+
+### System Config (`config/system_config.yaml`)
 ```yaml
 serial:
-  port: "/dev/serial0"    # RPi UART
+  port: "/dev/serial0"
   baud: 921600
 
 camera:
@@ -68,68 +179,18 @@ camera:
 
 aruco:
   dictionary: "DICT_6X6_250"
-  marker_size_m: 0.20     # 20cm markers
+  marker_size_m: 0.20
 ```
 
-## Quick Start
-
-### Step 1: Calibrate Camera
-```bash
-python tools/calibrate_camera.py --camera 0 --output config/camera_params.yaml
-```
-Present a chessboard pattern at various angles. Minimum 15 images recommended.
-
-### Step 2: Generate Markers
-```bash
-python tools/generate_markers.py --ids 0,1,2,3,4 --size 20 --output markers/
-```
-Print the PDF at 100% scale (20cm x 20cm) and mount flat on ceiling.
-
-### Step 3: Configure Marker Map
-Edit `config/marker_map.yaml` with actual marker positions:
+### Marker Map (`config/marker_map.yaml`)
 ```yaml
 markers:
   - id: 0
-    position: [0.0, 0.0, 3.0]   # X, Y, Z in meters (ceiling height)
+    position: [0.0, 0.0, 3.0]   # X, Y, Z (ceiling height)
     orientation: 0
   - id: 1
     position: [2.0, 0.0, 3.0]
     orientation: 0
-```
-
-### Step 4: Test Detection
-```bash
-python tools/test_aruco_detection.py
-```
-
-### Step 5: Test MAVLink Connection
-```bash
-python tools/test_mavlink.py --port /dev/serial0 --baud 921600
-```
-
-## Usage
-
-### Ground Test Mode (No Flight)
-Test detection and control calculations without arming:
-```bash
-python -m src.main --mode ground_test --config config/system_config.yaml
-```
-
-### Phase 1: Single Marker Hover
-Hover under a single marker with position hold:
-```bash
-python -m src.main --mode hover --altitude 1.5
-```
-
-### Phase 2: Mission Execution
-Execute a mission from JSON file:
-```bash
-python -m src.main --mode mission --mission missions/sample_square.json
-```
-
-With flight recording disabled:
-```bash
-python -m src.main --mode mission --mission missions/sample_square.json --no-record
 ```
 
 ## Mission File Format
@@ -139,62 +200,52 @@ JSON format compatible with VR planning software:
 {
   "mission_id": "flight_001",
   "waypoints": [
-    {"x": 0.0, "y": 0.0, "z": 1.5, "yaw": 0, "hold_time": 2.0, "name": "Start"},
-    {"x": 1.5, "y": 0.0, "z": 1.5, "yaw": 0, "hold_time": 1.0, "name": "Point A"},
-    {"x": 1.5, "y": 1.5, "z": 1.5, "yaw": 90, "hold_time": 1.0, "name": "Point B"}
+    {"x": 0.0, "y": 0.0, "z": 1.5, "yaw": 0, "hold_time": 2.0},
+    {"x": 1.5, "y": 0.0, "z": 1.5, "yaw": 0, "hold_time": 1.0}
   ],
   "settings": {
     "max_speed": 0.3,
-    "position_tolerance": 0.15,
-    "takeoff_altitude": 1.0
+    "position_tolerance": 0.15
   }
 }
 ```
-
-## Flight Recording Output
-
-Recorded flights are saved to `recordings/` in JSON format:
-```json
-{
-  "recording_id": "flight_20240114_103000",
-  "mission_id": "sample_square_001",
-  "samples": [
-    {"t": 0.0, "x": 0.0, "y": 0.0, "z": 1.5, "yaw": 0, "markers": [0]},
-    {"t": 0.1, "x": 0.05, "y": 0.01, "z": 1.52, "yaw": 1, "markers": [0]}
-  ]
-}
-```
-
-This format can be reimported to VR software for flight path iteration.
 
 ## Project Structure
 
 ```
 aruco_drone_nav/
-├── config/
-│   ├── camera_params.yaml       # Camera calibration
-│   ├── marker_map.yaml          # Marker world positions
-│   └── system_config.yaml       # System configuration
-├── src/
-│   ├── __init__.py
-│   ├── camera_calibration.py    # Chessboard calibration
-│   ├── aruco_detector.py        # Marker detection + pose
-│   ├── position_estimator.py    # World position estimation
-│   ├── mavlink_interface.py     # ArduCopter communication
-│   ├── mission_executor.py      # Waypoint navigation
-│   ├── flight_recorder.py       # VR-compatible recording
-│   ├── position_predictor.py    # Dead reckoning
-│   └── main.py                  # Main control loop
-├── tools/
-│   ├── calibrate_camera.py      # Camera calibration CLI
-│   ├── test_aruco_detection.py  # Detection test
-│   ├── test_mavlink.py          # FC connection test
-│   └── generate_markers.py      # Marker PDF generator
-├── missions/                    # Mission JSON files
-├── recordings/                  # Flight recordings
-├── docs/                        # Documentation
-└── requirements.txt
+├── config/                     # Configuration files
+├── src/                        # Core navigation code
+│   ├── aruco_detector.py       # Marker detection
+│   ├── position_estimator.py   # World position estimation
+│   ├── mavlink_interface.py    # Flight controller communication
+│   ├── mission_executor.py     # Waypoint navigation
+│   └── main.py                 # Main control loop
+├── tools/                      # Testing and utility tools
+│   ├── debug_gui.py            # Debug GUI (video, telemetry, map)
+│   ├── camera_server.py        # RPi MJPEG streaming server
+│   ├── calibrate_remote.py     # Network-based calibration
+│   ├── bench_test.py           # Position/command visualization
+│   ├── configurator_gui.py     # GUI configurator
+│   └── ...
+├── buildroot/                  # Minimal Linux image builder
+├── rpi_setup/                  # Raspbian setup scripts
+├── markers/                    # Generated marker PDFs
+├── missions/                   # Mission JSON files
+├── recordings/                 # Flight recordings
+└── docs/                       # Documentation
+    ├── TESTING.md              # Complete testing guide
+    ├── TECHNICAL.md            # Technical documentation
+    └── PLAN_v1.md              # Implementation plan
 ```
+
+## Documentation
+
+- **[TESTING.md](docs/TESTING.md)** - Complete testing guide with checklists
+- **[TECHNICAL.md](docs/TECHNICAL.md)** - Technical details and algorithms
+- **[CLAUDE.md](CLAUDE.md)** - AI session resume instructions
+- **[buildroot/README.md](buildroot/README.md)** - Minimal Linux image
+- **[rpi_setup/README.md](rpi_setup/README.md)** - Raspbian setup guide
 
 ## Safety Considerations
 
@@ -203,32 +254,27 @@ aruco_drone_nav/
 3. **Marker loss failsafe** - System lands if markers lost for >2 seconds
 4. **Battery monitoring** - Auto-land on low battery
 5. **RC override** - Always have RC transmitter ready for manual control
-6. **Geofence** - Software limits maximum distance from origin
+6. **Watchdog** - Buildroot image includes hardware watchdog for auto-recovery
 
 ## Troubleshooting
 
-### Camera not detected
+See [docs/TESTING.md](docs/TESTING.md) for detailed troubleshooting guide.
+
+### Quick Fixes
+
 ```bash
-# List video devices
+# Camera not detected
 ls /dev/video*
-# Test camera
-python -c "import cv2; print(cv2.VideoCapture(0).isOpened())"
+sudo usermod -a -G video $USER
+
+# Serial permission denied
+sudo usermod -a -G dialout $USER
+
+# Poor marker detection
+# - Ensure markers are flat and well-lit
+# - Verify --marker-size matches actual printed size
+# - Run camera calibration
 ```
-
-### MAVLink connection failed
-- Check serial port permissions: `sudo usermod -a -G dialout $USER`
-- Verify baud rate matches flight controller
-- Check UART is enabled on RPi: `sudo raspi-config`
-
-### Poor marker detection
-- Ensure markers are flat and well-lit
-- Check camera focus
-- Verify marker size in config matches physical size
-- Run calibration with more images
-
-## Contributing
-
-This is a private repository for drone navigation research. Contact the maintainers for access.
 
 ## License
 
@@ -241,4 +287,4 @@ Proprietary - Warsaw University of Technology
 
 ---
 
-*Generated: 2024-01-14*
+*Last updated: 2026-01-23*
