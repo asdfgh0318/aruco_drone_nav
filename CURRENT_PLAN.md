@@ -8,6 +8,9 @@ RPi + Camera = Visual GPS emulator. Detects markers, calculates position, sends 
 - [x] 6-DOF pose estimation (solvePnP)
 - [x] Camera calibration (chessboard)
 - [x] Remote calibration over network
+- [x] Wide-angle calibration (8-coefficient rational model)
+- [x] ChArUco board detection (sub-pixel pose accuracy)
+- [x] ChArUco board generator
 - [ ] Adaptive detection parameters (lighting conditions)
 
 ## 2. Position Calculation
@@ -38,7 +41,7 @@ RPi + Camera = Visual GPS emulator. Detects markers, calculates position, sends 
 - [x] Chessboard PDF generator
 - [x] MAVLink test tool
 - [x] Detection test tool
-- [ ] Marker spacing calculator
+- [x] Marker spacing calculator
 
 ## 6. Testing
 - [x] Desktop detection testing

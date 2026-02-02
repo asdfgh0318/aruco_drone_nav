@@ -59,6 +59,11 @@ def main():
         default=0.025,
         help='Chessboard square size in meters (default: 0.025)'
     )
+    parser.add_argument(
+        '--wide-angle', '-w',
+        action='store_true',
+        help='Use 8-coefficient rational model for wide-angle lenses (FOV > 80°)'
+    )
 
     args = parser.parse_args()
 
@@ -74,6 +79,7 @@ def main():
     print(f"Output: {output_path}")
     print(f"Chessboard: {args.board_width}x{args.board_height} corners")
     print(f"Square size: {args.square_size * 100:.1f} cm")
+    print(f"Distortion model: {'rational (8-coeff)' if args.wide_angle else 'standard (5-coeff)'}")
     print(f"Images to capture: {args.images}")
     print("\nPrint a chessboard pattern and present it to the camera")
     print("at various angles and distances.\n")
@@ -83,7 +89,8 @@ def main():
         output_path=str(output_path),
         num_images=args.images,
         chessboard_size=(args.board_width, args.board_height),
-        square_size_m=args.square_size
+        square_size_m=args.square_size,
+        wide_angle=args.wide_angle
     )
 
     if success:

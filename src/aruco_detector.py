@@ -457,6 +457,168 @@ class ArucoDetector:
         )
 
 
+class CharucoDetector(ArucoDetector):
+    """
+    ChArUco board detector with sub-pixel pose accuracy.
+
+    Extends ArucoDetector to detect ChArUco boards (ArUco + chessboard).
+    Uses chessboard corner interpolation for more accurate pose estimation
+    than plain ArUco markers.
+    """
+
+    def __init__(
+        self,
+        boards: dict,
+        camera_id: int = 0,
+        camera_matrix: Optional[np.ndarray] = None,
+        dist_coeffs: Optional[np.ndarray] = None,
+        dictionary: str = "DICT_6X6_250",
+        resolution: tuple = (640, 480),
+        fps: int = 30
+    ):
+        """
+        Args:
+            boards: Dict mapping board_id -> {squares_x, squares_y,
+                    square_size_m, marker_size_m, marker_ids}
+            camera_id: Camera device ID
+            camera_matrix: Camera intrinsic matrix
+            dist_coeffs: Distortion coefficients
+            dictionary: ArUco dictionary name
+            resolution: Camera resolution
+            fps: Target FPS
+        """
+        # Initialize parent (marker_size_m is not used for charuco)
+        super().__init__(
+            camera_id=camera_id,
+            camera_matrix=camera_matrix,
+            dist_coeffs=dist_coeffs,
+            dictionary=dictionary,
+            marker_size_m=0.0,
+            resolution=resolution,
+            fps=fps
+        )
+
+        # Build CharucoBoard objects
+        self.charuco_boards = {}
+        for board_id, cfg in boards.items():
+            board = cv2.aruco.CharucoBoard(
+                (cfg['squares_x'], cfg['squares_y']),
+                cfg['square_size_m'],
+                cfg['marker_size_m'],
+                self.aruco_dict
+            )
+            board.setLegacyPattern(False)
+
+            if 'marker_ids' in cfg:
+                board.setIds(np.array(cfg['marker_ids'], dtype=np.int32))
+            else:
+                markers_per_board = (cfg['squares_x'] * cfg['squares_y']) // 2
+                offset = board_id * markers_per_board
+                board.setIds(np.arange(offset, offset + markers_per_board, dtype=np.int32))
+
+            self.charuco_boards[board_id] = board
+
+        # Create CharucoDetector for each board
+        self.charuco_detectors = {}
+        charuco_params = cv2.aruco.CharucoParameters()
+        for board_id, board in self.charuco_boards.items():
+            self.charuco_detectors[board_id] = cv2.aruco.CharucoDetector(
+                board, charuco_params, self.aruco_params
+            )
+
+    def detect(self, frame: Optional[np.ndarray] = None) -> List[MarkerDetection]:
+        """
+        Detect ChArUco boards and estimate pose with sub-pixel accuracy.
+
+        Returns MarkerDetection objects where marker_id is the board_id
+        and pose comes from ChArUco corner interpolation.
+        """
+        if frame is None:
+            frame = self.get_frame()
+            if frame is None:
+                return []
+
+        timestamp = time.time()
+        detections: List[MarkerDetection] = []
+
+        for board_id, charuco_det in self.charuco_detectors.items():
+            board = self.charuco_boards[board_id]
+
+            charuco_corners, charuco_ids, marker_corners, marker_ids = \
+                charuco_det.detectBoard(frame)
+
+            if charuco_corners is not None and len(charuco_corners) >= 4:
+                # Estimate pose from ChArUco corners (sub-pixel accuracy)
+                success, rvec, tvec = cv2.aruco.estimatePoseCharucoBoard(
+                    charuco_corners, charuco_ids, board,
+                    self.camera_matrix, self.dist_coeffs,
+                    None, None
+                )
+
+                if success:
+                    tvec = tvec.flatten()
+                    rvec = rvec.flatten()
+                    distance = np.linalg.norm(tvec)
+
+                    detection = MarkerDetection(
+                        marker_id=int(board_id),
+                        corners=marker_corners[0] if marker_corners is not None and len(marker_corners) > 0 else np.zeros((1, 4, 2)),
+                        rvec=rvec,
+                        tvec=tvec,
+                        distance=distance,
+                        timestamp=timestamp
+                    )
+                    detections.append(detection)
+
+        # Update statistics
+        self.frames_processed += 1
+        self._fps_frame_count += 1
+        current_time = time.time()
+        if current_time - self._last_fps_time >= 1.0:
+            self.detection_rate = self._fps_frame_count / (
+                current_time - self._last_fps_time
+            )
+            self._fps_frame_count = 0
+            self._last_fps_time = current_time
+
+        return detections
+
+    @classmethod
+    def from_config(
+        cls,
+        config: dict,
+        calibration_path: str
+    ) -> 'CharucoDetector':
+        """Create CharucoDetector from config with charuco section."""
+        camera_matrix, dist_coeffs = CameraCalibration.load_calibration(
+            calibration_path
+        )
+
+        charuco_config = config.get('charuco', {})
+        boards = {}
+        for board_cfg in charuco_config.get('boards', []):
+            board_id = board_cfg['id']
+            boards[board_id] = {
+                'squares_x': board_cfg.get('squares_x', 5),
+                'squares_y': board_cfg.get('squares_y', 5),
+                'square_size_m': board_cfg.get('square_size_m', 0.04),
+                'marker_size_m': board_cfg.get('marker_size_m', 0.03),
+            }
+
+        return cls(
+            boards=boards,
+            camera_id=config.get('camera', {}).get('device_id', 0),
+            camera_matrix=camera_matrix,
+            dist_coeffs=dist_coeffs,
+            dictionary=config.get('aruco', {}).get('dictionary', 'DICT_6X6_250'),
+            resolution=(
+                config.get('camera', {}).get('width', 640),
+                config.get('camera', {}).get('height', 480)
+            ),
+            fps=config.get('camera', {}).get('fps', 30)
+        )
+
+
 def test_detection():
     """Simple test function for marker detection."""
     logging.basicConfig(level=logging.INFO)

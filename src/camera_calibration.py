@@ -130,12 +130,14 @@ class CameraCalibration:
 
         return False
 
-    def calibrate(self, min_images: int = 10) -> bool:
+    def calibrate(self, min_images: int = 10, wide_angle: bool = False) -> bool:
         """
         Perform camera calibration using collected images.
 
         Args:
             min_images: Minimum number of images required
+            wide_angle: Use 8-coefficient rational model for wide-angle lenses
+                        (FOV > 80°). Better handles barrel distortion.
 
         Returns:
             True if calibration succeeded
@@ -152,8 +154,12 @@ class CameraCalibration:
             return False
 
         logger.info(
-            f"Calibrating with {len(self.img_points)} images..."
+            f"Calibrating with {len(self.img_points)} images "
+            f"({'rational model' if wide_angle else 'standard model'})..."
         )
+
+        # Use rational model for wide-angle lenses (8 coefficients)
+        flags = cv2.CALIB_RATIONAL_MODEL if wide_angle else 0
 
         # Perform calibration
         ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(
@@ -161,17 +167,20 @@ class CameraCalibration:
             self.img_points,
             self.image_size,
             None,
-            None
+            None,
+            flags=flags
         )
 
         if ret:
             self.camera_matrix = mtx
             self.dist_coeffs = dist
             self.reprojection_error = ret
+            self._wide_angle = wide_angle
 
             logger.info(
                 f"Calibration successful! "
-                f"Reprojection error: {ret:.4f} pixels"
+                f"Reprojection error: {ret:.4f} pixels "
+                f"({len(dist.flatten())} distortion coefficients)"
             )
             return True
         else:
@@ -212,7 +221,10 @@ class CameraCalibration:
                 'reprojection_error': float(self.reprojection_error),
                 'num_images': len(self.img_points),
                 'chessboard_size': list(self.chessboard_size),
-                'square_size_m': self.square_size_m
+                'square_size_m': self.square_size_m,
+                'distortion_model': 'rational' if getattr(self, '_wide_angle', False) else 'standard',
+                'image_width': self.image_size[0],
+                'image_height': self.image_size[1]
             }
         }
 
@@ -277,9 +289,10 @@ class CameraCalibration:
 def interactive_calibration(
     camera_id: int = 0,
     output_path: str = "config/camera_params.yaml",
-    num_images: int = 15,
+    num_images: int = 20,
     chessboard_size: Tuple[int, int] = (9, 6),
-    square_size_m: float = 0.025
+    square_size_m: float = 0.025,
+    wide_angle: bool = False
 ) -> bool:
     """
     Run interactive camera calibration.
@@ -287,9 +300,10 @@ def interactive_calibration(
     Args:
         camera_id: Camera device ID
         output_path: Path to save calibration
-        num_images: Number of images to capture
+        num_images: Number of images to capture (20+ recommended)
         chessboard_size: Chessboard inner corners
         square_size_m: Square size in meters
+        wide_angle: Use rational model for wide-angle lenses (FOV > 80°)
 
     Returns:
         True if calibration completed successfully
@@ -301,10 +315,18 @@ def interactive_calibration(
         logger.error(f"Failed to open camera {camera_id}")
         return False
 
+    model_name = "rational (8-coeff)" if wide_angle else "standard (5-coeff)"
+
     print(f"\n=== Camera Calibration ===")
     print(f"Chessboard size: {chessboard_size[0]}x{chessboard_size[1]} corners")
     print(f"Square size: {square_size_m * 100:.1f} cm")
+    print(f"Distortion model: {model_name}")
     print(f"Images needed: {num_images}")
+    print(f"\nTips for good calibration (<1px error):")
+    print(f"  - Cover the entire frame (center, corners, edges)")
+    print(f"  - Vary the angle (tilt board 20-45 degrees)")
+    print(f"  - Vary the distance (near, medium, far)")
+    print(f"  - At least {num_images} images, more is better")
     print(f"\nControls:")
     print(f"  SPACE - Capture image when chessboard is detected")
     print(f"  C     - Run calibration with current images")
@@ -343,7 +365,7 @@ def interactive_calibration(
                     print("\nEnough images captured! Press 'C' to calibrate.")
 
         elif key == ord('c'):
-            if calibration.calibrate(min_images=5):
+            if calibration.calibrate(min_images=5, wide_angle=wide_angle):
                 if calibration.save_calibration(output_path):
                     print(f"\nCalibration saved to {output_path}")
                     break
