@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ArUco Drone Navigation - Documentation</title>
+    <title>ArUco Vision GPS - Documentation</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -14,80 +14,234 @@
                 <li><a href="index.html" class="active">Home</a></li>
                 <li><a href="gui-guide.html">Debug GUI</a></li>
                 <li><a href="calibration.html">Calibration</a></li>
+                <li><a href="sitl.html">SITL Testing</a></li>
                 <li><a href="https://github.com/asdfgh0318/aruco_drone_nav">GitHub</a></li>
             </ul>
         </div>
     </nav>
 
     <div class="hero">
-        <h1>ArUco Drone Navigation</h1>
-        <p>Vision-based indoor drone navigation using ceiling-mounted ArUco markers on Raspberry Pi Zero 2W</p>
+        <h1>ArUco Vision GPS</h1>
+        <p>Vision-based GPS emulator for indoor drones using ceiling-mounted ArUco markers on Raspberry Pi Zero 2W</p>
     </div>
 
     <main>
         <h2>Overview</h2>
-        <p>This system enables autonomous indoor drone flight using:</p>
-        <ul>
-            <li><strong>ArUco Markers</strong> - Ceiling-mounted visual fiducials for localization</li>
-            <li><strong>OpenCV</strong> - Real-time marker detection and pose estimation</li>
-            <li><strong>MAVLink</strong> - Communication with ArduCopter flight controllers</li>
-            <li><strong>Raspberry Pi Zero 2W</strong> - Lightweight onboard computing</li>
-        </ul>
+        <p>This system enables autonomous indoor drone flight by replacing GPS with ceiling-mounted ArUco markers. A Raspberry Pi Zero 2W detects the markers, calculates the drone's world-frame position, and sends <code>VISION_POSITION_ESTIMATE</code> to the flight controller via MAVLink. The FC handles all navigation, PID, missions, and failsafes natively.</p>
+
+        <h2>System Architecture</h2>
+        <div class="diagram">
+<pre>
+  Ceiling
+  [Marker 0] [Marker 1] [Marker 2] ...    (known world positions)
+       |          |          |
+       v          v          v
+  +-----------------------------+          +---------------------+
+  | RPi Zero 2W                 |          | Flight Controller   |
+  |                             |          | ArduCopter          |
+  |  USB Camera (640x480@15fps) |          |                     |
+  |       |                     |          | EKF3                |
+  |       v                     |          |  - ExternalNav src  |
+  |  ArUco Detection            |          |  - Baro for alt     |
+  |  - detectMarkers()          |          |                     |
+  |  - solvePnP per marker      |  UART   | PID / Navigation    |
+  |       |                     | -------> | Missions / RTL      |
+  |       v                     | MAVLink  | Failsafes           |
+  |  Position Estimation        |          +---------------------+
+  |  - marker-to-world transform|
+  |  - multi-marker fusion      |
+  |  - ENU to NED conversion    |
+  |       |                     |
+  |       v                     |
+  |  VISION_POSITION_ESTIMATE   |
+  +-----------------------------+
+</pre>
+        </div>
 
         <h2>Documentation</h2>
         <div class="cards">
             <div class="card">
                 <h3>Debug GUI Guide</h3>
-                <p>Real-time visualization tool with video streaming, telemetry display, and marker mapping.</p>
+                <p>Real-time visualization with video streaming, telemetry display, and marker mapping.</p>
                 <a href="gui-guide.html">Read Guide &rarr;</a>
             </div>
             <div class="card">
                 <h3>Camera Calibration</h3>
-                <p>How to calibrate your camera using the chessboard pattern for accurate pose estimation.</p>
+                <p>Calibrate your camera using chessboard or ChArUco patterns for accurate pose estimation.</p>
                 <a href="calibration.html">Read Guide &rarr;</a>
+            </div>
+            <div class="card">
+                <h3>SITL Testing</h3>
+                <p>Validate the full vision-to-FC pipeline against ArduCopter SITL without hardware.</p>
+                <a href="sitl.html">Read Guide &rarr;</a>
+            </div>
+            <div class="card">
+                <h3>FC Configuration</h3>
+                <p>ArduCopter EKF3 and vision parameter setup for external navigation.</p>
+                <a href="FC_CONFIG.md">Read Guide &rarr;</a>
             </div>
             <div class="card">
                 <h3>Testing Guide</h3>
                 <p>Complete testing procedures from bench tests to flight tests.</p>
                 <a href="TESTING.md">Read Guide &rarr;</a>
             </div>
+            <div class="card">
+                <h3>Technical Details</h3>
+                <p>Algorithms, coordinate frames, and implementation details.</p>
+                <a href="TECHNICAL.md">Read Guide &rarr;</a>
+            </div>
         </div>
 
-        <h2>System Architecture</h2>
+        <h2>Data Flow</h2>
         <div class="diagram">
 <pre>
-RPi Zero 2W (10.156.64.251)              Local Development Machine
-+------------------------+               +------------------------+
-|                        |               |                        |
-|  camera_server.py      |   MJPEG      |  debug_gui.py          |
-|  - USB Camera capture  | -----------> |  - Video display       |
-|  - JPEG compression    |  Port 8000   |  - ArUco detection     |
-|  - HTTP streaming      |               |  - Telemetry panel     |
-|                        |               |  - Marker map          |
-+------------------------+               +------------------------+
-         |
-         | UART/Serial
-         v
-+------------------------+
-|   ArduCopter FC        |
-|   - Flight control     |
-|   - Sensor fusion      |
-+------------------------+
+  Camera frame (640x480 BGR)
+       |
+       v
+  cv2.aruco.detectMarkers()
+       |
+       v
+  List[MarkerDetection]  (corners, tvec, rvec per marker)
+       |
+       v
+  PositionEstimator.estimate()
+    1. marker-in-camera --> invert --> drone-relative-to-marker
+    2. Apply marker world position + orientation
+    3. Multi-marker fusion (distance-weighted average)
+    4. Low-pass filter
+       |
+       v
+  DroneState(x, y, z, yaw, confidence)     [ENU frame]
+       |
+       v
+  ENU to NED conversion:
+    NED_x = ENU_y   (North)
+    NED_y = ENU_x   (East)
+    NED_z = -ENU_z  (Down)
+       |
+       v
+  VISION_POSITION_ESTIMATE --> FC EKF3
 </pre>
         </div>
 
+        <h2>Tools</h2>
+        <table>
+            <tr>
+                <th>Tool</th>
+                <th>Description</th>
+            </tr>
+            <tr>
+                <td><code>test_sitl.py</code></td>
+                <td><strong>SITL validation</strong> - params, EKF origin, streaming, convergence, arm + flight</td>
+            </tr>
+            <tr>
+                <td><code>debug_gui.py</code></td>
+                <td>Debug GUI with live video, telemetry, marker map</td>
+            </tr>
+            <tr>
+                <td><code>bench_test.py</code></td>
+                <td>Position error and velocity visualization</td>
+            </tr>
+            <tr>
+                <td><code>camera_server.py</code></td>
+                <td>MJPEG streaming server (runs on RPi)</td>
+            </tr>
+            <tr>
+                <td><code>calibrate_remote.py</code></td>
+                <td>Network-based camera calibration</td>
+            </tr>
+            <tr>
+                <td><code>calibrate_camera.py</code></td>
+                <td>Local camera intrinsic calibration</td>
+            </tr>
+            <tr>
+                <td><code>test_aruco_detection.py</code></td>
+                <td>Live marker detection test</td>
+            </tr>
+            <tr>
+                <td><code>test_mavlink.py</code></td>
+                <td>MAVLink connection test</td>
+            </tr>
+            <tr>
+                <td><code>generate_markers.py</code></td>
+                <td>Create printable ArUco marker PDFs</td>
+            </tr>
+            <tr>
+                <td><code>generate_charuco.py</code></td>
+                <td>Create ChArUco calibration boards</td>
+            </tr>
+            <tr>
+                <td><code>generate_chessboard.py</code></td>
+                <td>Create chessboard calibration patterns</td>
+            </tr>
+            <tr>
+                <td><code>marker_spacing.py</code></td>
+                <td>Calculate marker spacing for room/camera setup</td>
+            </tr>
+            <tr>
+                <td><code>configurator_gui.py</code></td>
+                <td>GUI for editing YAML config files</td>
+            </tr>
+        </table>
+
+        <h2>SITL Validation Results</h2>
+        <p>The full vision-to-FC pipeline has been validated in ArduCopter SITL (2026-02-03):</p>
+        <table>
+            <tr>
+                <th>Test</th>
+                <th>Steps</th>
+                <th>Result</th>
+                <th>Position Error</th>
+            </tr>
+            <tr>
+                <td>Basic (params + EKF convergence)</td>
+                <td>6/6</td>
+                <td style="color: #22c55e; font-weight: 600;">PASS</td>
+                <td>0.004m</td>
+            </tr>
+            <tr>
+                <td>Arm + guided flight (takeoff, hover, land)</td>
+                <td>5/5</td>
+                <td style="color: #22c55e; font-weight: 600;">PASS</td>
+                <td>0.003m</td>
+            </tr>
+            <tr>
+                <td>Circle pattern (1.5m radius, 20s)</td>
+                <td>4/4</td>
+                <td style="color: #22c55e; font-weight: 600;">PASS</td>
+                <td>0.189m</td>
+            </tr>
+        </table>
+        <p>See <a href="sitl.html">SITL Testing</a> for full details and reproduction steps.</p>
+
         <h2>Quick Start</h2>
 
-        <h3>1. Start Camera Server on RPi</h3>
+        <h3>1. SITL Testing (No Hardware)</h3>
+        <pre><code># Build SITL (one-time)
+cd ~/ardupilot && ./waf configure --board sitl && ./waf build --target bin/arducopter
+
+# Start SITL with vision params
+cd /tmp && ~/ardupilot/build/sitl/bin/arducopter --model + --speedup 1 -I0 \
+    --home 52.2297,21.0122,100,0 \
+    --defaults ~/ardupilot/Tools/autotest/default_params/copter.parm,config/sitl_params.parm
+
+# Validate (another terminal)
+python3 tools/test_sitl.py -v --skip-params --arm</code></pre>
+
+        <h3>2. Start Camera Server on RPi</h3>
         <pre><code>ssh pi@10.156.64.251
 cd /home/pi/aruco_drone_nav
 python3 tools/camera_server.py --port 8000</code></pre>
 
-        <h3>2. Launch Debug GUI on Local Machine</h3>
+        <h3>3. Launch Debug GUI on Local Machine</h3>
         <pre><code>python3 tools/debug_gui.py --host 10.156.64.251 --port 8000</code></pre>
 
-        <h3>3. Calibrate Camera (if needed)</h3>
-        <pre><code>python3 tools/calibrate_remote.py --host 10.156.64.251 --port 8000</code></pre>
+        <h3>4. Run Vision GPS on RPi</h3>
+        <pre><code># Test mode (console output, no MAVLink)
+python3 -m src.main --mode test --config config/system_config.yaml
+
+# Run mode (sends to FC)
+python3 -m src.main --mode run --config config/system_config.yaml</code></pre>
 
         <h2>Key Features</h2>
         <table>
@@ -96,24 +250,32 @@ python3 tools/camera_server.py --port 8000</code></pre>
                 <th>Description</th>
             </tr>
             <tr>
-                <td>Multi-Marker Navigation</td>
-                <td>Navigate using multiple ceiling markers with world coordinate system</td>
+                <td>Vision GPS Emulation</td>
+                <td>Replaces GPS with ceiling-mounted ArUco markers for indoor flight</td>
             </tr>
             <tr>
-                <td>Mission Execution</td>
-                <td>Execute waypoint missions from JSON files (VR-compatible format)</td>
+                <td>Multi-Marker Fusion</td>
+                <td>Distance-weighted fusion of multiple markers for robust positioning</td>
             </tr>
             <tr>
-                <td>Position Estimation</td>
-                <td>6DOF pose estimation with marker-relative and world positions</td>
+                <td>6-DOF Pose Estimation</td>
+                <td>Full position and orientation via solvePnP with calibrated camera</td>
+            </tr>
+            <tr>
+                <td>EKF3 Integration</td>
+                <td>FC uses vision data as primary position source via ExternalNav</td>
+            </tr>
+            <tr>
+                <td>SITL Validated</td>
+                <td>Full pipeline tested: arm, takeoff, hover, land, circle pattern</td>
             </tr>
             <tr>
                 <td>Network Streaming</td>
-                <td>MJPEG video streaming for remote debugging</td>
+                <td>MJPEG video streaming for remote debugging and calibration</td>
             </tr>
             <tr>
-                <td>Flight Recording</td>
-                <td>Record trajectory and marker detections for analysis</td>
+                <td>ChArUco Calibration</td>
+                <td>Sub-pixel accurate calibration with wide-angle lens support</td>
             </tr>
         </table>
 
@@ -123,24 +285,27 @@ python3 tools/camera_server.py --port 8000</code></pre>
             <li><strong>Camera:</strong> USB camera (640x480 @ 15+ FPS)</li>
             <li><strong>Flight Controller:</strong> ArduCopter-compatible (Pixhawk, etc.)</li>
             <li><strong>Markers:</strong> Printed ArUco markers (DICT_6X6_250, 20cm recommended)</li>
+            <li><strong>Connection:</strong> UART serial @ 921600 baud</li>
         </ul>
 
         <div class="note">
-            <strong>Note:</strong> The system has been tested on RPi Zero 2W at 640x480 resolution achieving ~15 FPS detection rate.
+            <strong>Note:</strong> The system has been tested on RPi Zero 2W at 640x480 resolution achieving ~15 FPS detection rate. SITL validation confirmed the full pipeline works end-to-end.
         </div>
 
         <h2>Project Status</h2>
-        <p>Current version: <strong>1.0</strong> (2026-01-23)</p>
+        <p>Current version: <strong>1.1</strong> (2026-02-03)</p>
         <ul>
             <li>RPi deployment tested and working</li>
-            <li>Camera calibration completed</li>
+            <li>Camera calibration completed (chessboard + ChArUco)</li>
             <li>Debug GUI with network streaming operational</li>
-            <li>Position estimation accuracy: ~1mm at 0.5m distance</li>
+            <li>SITL: Full pipeline validated (EKF convergence, arm, flight, land)</li>
+            <li>FC configuration documented and param file provided</li>
+            <li>Next: Real FC integration over UART</li>
         </ul>
     </main>
 
     <footer>
-        <p>ArUco Drone Navigation System &copy; 2026 Warsaw University of Technology</p>
+        <p>ArUco Vision GPS &copy; 2026 Warsaw University of Technology</p>
         <p>Authors: Adam Koszalka &amp; Claude Code</p>
     </footer>
 </body>

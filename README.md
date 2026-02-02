@@ -2,7 +2,7 @@
 
 **Vision-based GPS emulator for indoor drones using ceiling-mounted ArUco markers**
 
-A Python system for Raspberry Pi Zero that detects ArUco markers, calculates world-frame position, and sends it to an ArduCopter flight controller via MAVLink. The FC handles all navigation, PID control, missions, and failsafes natively.
+A Python system for Raspberry Pi Zero 2W that detects ArUco markers, calculates world-frame position, and sends `VISION_POSITION_ESTIMATE` to an ArduCopter flight controller via MAVLink. The FC handles all navigation, PID control, missions, and failsafes natively.
 
 ## Architecture
 
@@ -11,8 +11,9 @@ Ceiling-mounted       USB Camera          RPi Zero 2W              Flight Contro
 ArUco Markers    -->  (facing up)    -->  Vision GPS          -->  ArduCopter EKF
                                           - Detect markers         - Position estimation
                                           - Estimate position      - PID control
-                                          - VISION_POSITION_       - Navigation
-                                            ESTIMATE via MAVLink   - Missions & failsafes
+                                          - ENU→NED conversion     - Navigation
+                                          - VISION_POSITION_       - Missions & failsafes
+                                            ESTIMATE via MAVLink
 ```
 
 ## Hardware Requirements
@@ -38,6 +39,7 @@ pip install -r requirements.txt
 # Generate test targets
 python3 tools/generate_markers.py --ids 0,1,2,3,4 --size 20 --output markers/
 python3 tools/generate_chessboard.py --output markers/
+python3 tools/generate_charuco.py --output markers/
 
 # Print markers/markers_DICT_6X6_250.pdf at 100% scale
 
@@ -53,6 +55,23 @@ python3 tools/bench_test.py --camera 0 --marker-size 0.20
 # Launch GUI configurator
 sudo apt-get install python3-tk  # if needed
 python3 tools/configurator_gui.py
+```
+
+### SITL Testing (No Hardware Needed)
+
+```bash
+# Build ArduCopter SITL (one-time)
+cd ~/ardupilot && ./waf configure --board sitl && ./waf build --target bin/arducopter
+
+# Start SITL with vision params
+cd /tmp && ~/ardupilot/build/sitl/bin/arducopter --model + --speedup 1 -I0 \
+    --home 52.2297,21.0122,100,0 \
+    --defaults ~/ardupilot/Tools/autotest/default_params/copter.parm,config/sitl_params.parm
+
+# Run validation (in another terminal)
+python3 tools/test_sitl.py -v --skip-params           # Basic: stream + EKF convergence
+python3 tools/test_sitl.py -v --skip-params --arm      # Arm, takeoff, hover, land
+python3 tools/test_sitl.py -v --skip-params -p circle   # Circle pattern tracking
 ```
 
 ### Raspberry Pi Deployment
@@ -96,15 +115,18 @@ python3 -m src.main --mode run --config config/system_config.yaml
 
 | Tool | Description | Usage |
 |------|-------------|-------|
-| `debug_gui.py` | **Debug GUI with live video, telemetry, marker map** | `python3 tools/debug_gui.py` |
+| `test_sitl.py` | **SITL validation** (params, EKF, arm, flight) | `python3 tools/test_sitl.py -v --skip-params` |
+| `debug_gui.py` | **Debug GUI** with live video, telemetry, marker map | `python3 tools/debug_gui.py` |
+| `bench_test.py` | Position error + velocity visualization | `python3 tools/bench_test.py` |
 | `camera_server.py` | MJPEG streaming server (runs on RPi) | `python3 tools/camera_server.py` |
 | `calibrate_remote.py` | Network-based camera calibration | `python3 tools/calibrate_remote.py` |
 | `calibrate_camera.py` | Local camera intrinsic calibration | `python3 tools/calibrate_camera.py` |
 | `test_aruco_detection.py` | Live marker detection test | `python3 tools/test_aruco_detection.py` |
-| `bench_test.py` | Position error + velocity commands | `python3 tools/bench_test.py` |
 | `test_mavlink.py` | MAVLink connection test | `python3 tools/test_mavlink.py` |
 | `generate_markers.py` | Create printable ArUco markers | `python3 tools/generate_markers.py` |
-| `generate_chessboard.py` | Create calibration pattern | `python3 tools/generate_chessboard.py` |
+| `generate_charuco.py` | Create ChArUco calibration boards | `python3 tools/generate_charuco.py` |
+| `generate_chessboard.py` | Create chessboard calibration pattern | `python3 tools/generate_chessboard.py` |
+| `marker_spacing.py` | Calculate marker spacing for room/camera | `python3 tools/marker_spacing.py` |
 | `configurator_gui.py` | GUI for testing/configuration | `python3 tools/configurator_gui.py` |
 
 ## Debug GUI (Network Streaming)
@@ -151,6 +173,13 @@ control:
   loop_rate_hz: 20
 ```
 
+### SITL Config (`config/sitl_config.yaml`)
+```yaml
+serial:
+  port: "tcp:127.0.0.1:5760"
+  baud: 115200
+```
+
 ### Marker Map (`config/marker_map.yaml`)
 ```yaml
 markers:
@@ -167,18 +196,23 @@ markers:
 ```
 aruco_drone_nav/
 +-- config/                     # Configuration files
+|   +-- system_config.yaml      # Main system config (serial, camera, aruco)
+|   +-- camera_params.yaml      # Camera intrinsic calibration
+|   +-- marker_map.yaml         # Marker world positions
+|   +-- sitl_config.yaml        # SITL testing config
+|   +-- sitl_params.parm        # ArduCopter params for vision flight
 +-- src/                        # Core system
+|   +-- main.py                 # Vision GPS main loop (detect→estimate→send)
 |   +-- aruco_detector.py       # Marker detection + pose estimation
-|   +-- position_estimator.py   # World position from markers
+|   +-- position_estimator.py   # World position from markers (multi-marker fusion)
 |   +-- mavlink_interface.py    # MAVLink (VISION_POSITION_ESTIMATE)
 |   +-- camera_calibration.py   # Camera intrinsic calibration
-|   +-- main.py                 # Vision GPS main loop
 |   +-- deprecated/             # Old PID/mission/failsafe code
 +-- tools/                      # Testing and utility tools
 +-- buildroot/                  # Minimal Linux image builder
 +-- rpi_setup/                  # Raspbian setup scripts
 +-- markers/                    # Generated marker PDFs
-+-- docs/                       # Documentation
++-- docs/                       # Documentation (HTML site + markdown)
 ```
 
 ## FC Configuration (ArduCopter)
@@ -186,19 +220,40 @@ aruco_drone_nav/
 To use vision position data, configure the flight controller:
 
 ```
-VISO_TYPE = 1          # MAVLink vision
-EK3_SRC1_POSXY = 6     # ExternalNav
-EK3_SRC1_POSZ = 6      # ExternalNav
-EK3_SRC1_YAW = 6       # ExternalNav (or 1 for compass)
+AHRS_EKF_TYPE = 3      # Use EKF3
+EK3_SRC1_POSXY = 6     # ExternalNav for XY position
+EK3_SRC1_POSZ = 1      # Baro for altitude (safer indoors)
+EK3_SRC1_YAW = 6       # ExternalNav for yaw
+VISO_TYPE = 1           # MAVLink vision
 GPS_TYPE = 0            # Disable GPS (indoor)
+COMPASS_ENABLE = 0      # Disable compass (indoor)
 ```
+
+See [docs/FC_CONFIG.md](docs/FC_CONFIG.md) for full parameter list and explanation.
+
+A ready-to-use parameter file is provided: `config/sitl_params.parm`
+
+## SITL Validation Results
+
+The full vision-to-FC pipeline has been validated in ArduCopter SITL:
+
+| Test | Result | Position Error |
+|------|--------|---------------|
+| Basic (params + EKF convergence) | 6/6 PASS | 0.004m |
+| Arm + guided flight (takeoff, hover, land) | 5/5 PASS | 0.003m |
+| Circle pattern (1.5m radius, 20s) | 4/4 PASS | 0.189m |
+
+See [docs/SITL_RESULTS.md](docs/SITL_RESULTS.md) for full results and reproduction steps.
 
 ## Documentation
 
+- **[HTML Docs](docs/index.html)** - Browse documentation locally
+- **[FC_CONFIG.md](docs/FC_CONFIG.md)** - Flight controller configuration guide
+- **[SITL_RESULTS.md](docs/SITL_RESULTS.md)** - SITL test results and reproduction
+- **[PAWEL_SUMMARY.md](docs/PAWEL_SUMMARY.md)** - Technical architecture summary
 - **[TESTING.md](docs/TESTING.md)** - Complete testing guide
 - **[TECHNICAL.md](docs/TECHNICAL.md)** - Technical details and algorithms
 - **[CURRENT_PLAN.md](CURRENT_PLAN.md)** - Project roadmap
-- **[rpi_setup/README.md](rpi_setup/README.md)** - Raspbian setup guide
 
 ## License
 
@@ -211,4 +266,4 @@ Proprietary - Warsaw University of Technology
 
 ---
 
-*Last updated: 2026-02-02*
+*Last updated: 2026-02-03*
