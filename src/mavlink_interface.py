@@ -638,9 +638,9 @@ class MAVLinkInterface:
         messages as a position source when configured for external navigation.
 
         Args:
-            x: X position in meters (East in ENU frame)
-            y: Y position in meters (North in ENU frame)
-            z: Z position in meters (Up in ENU frame)
+            x: X position in meters (North in NED frame)
+            y: Y position in meters (East in NED frame)
+            z: Z position in meters (Down in NED frame, positive = below origin)
             roll: Roll angle in radians
             pitch: Pitch angle in radians
             yaw: Yaw angle in radians
@@ -679,6 +679,31 @@ class MAVLinkInterface:
             covariance,
             0  # reset_counter
         )
+
+    def set_ekf_origin(self, lat: float = 52.2297, lon: float = 21.0122, alt: float = 100.0):
+        """
+        Set EKF origin for non-GPS flight. Must be called before arming.
+
+        Without GPS, the EKF has no origin. This sets an arbitrary reference
+        point so the EKF can function. The lat/lon can be any valid location
+        (defaults to Warsaw, Poland). Once set, cannot be changed without reboot.
+
+        Args:
+            lat: Latitude in degrees (default: Warsaw)
+            lon: Longitude in degrees (default: Warsaw)
+            alt: Altitude in mm above sea level (default: 100m)
+        """
+        if self.connection is None:
+            return
+
+        self.connection.mav.set_gps_global_origin_send(
+            self.target_system,
+            int(lat * 1e7),
+            int(lon * 1e7),
+            int(alt * 1000),
+            int(time.time() * 1e6)
+        )
+        logger.info(f"EKF origin set to ({lat:.4f}, {lon:.4f}, {alt:.0f}m)")
 
     def set_home_position(self):
         """Set current position as home."""

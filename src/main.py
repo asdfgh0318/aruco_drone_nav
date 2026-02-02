@@ -100,6 +100,9 @@ class VisionGPS:
                 logger.error("Failed to connect to flight controller")
                 return False
 
+            # Set EKF origin (required for non-GPS flight)
+            self.mavlink.set_ekf_origin()
+
         logger.info("All components initialized")
         self._running = True
         self._start_time = time.time()
@@ -154,10 +157,13 @@ class VisionGPS:
                 state = self.estimator.estimate(detections)
 
                 if state and self.mavlink:
+                    # Convert ENU (estimator) to NED (MAVLink)
+                    # ENU: X=East, Y=North, Z=Up
+                    # NED: X=North, Y=East, Z=Down
                     self.mavlink.send_vision_position_estimate(
-                        x=state.x,
-                        y=state.y,
-                        z=state.z,
+                        x=state.y,       # North = ENU Y
+                        y=state.x,       # East  = ENU X
+                        z=-state.z,      # Down  = -ENU Z
                         roll=0.0,
                         pitch=0.0,
                         yaw=np.radians(state.yaw),

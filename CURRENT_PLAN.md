@@ -16,10 +16,12 @@ RPi + Camera = Visual GPS emulator. Detects markers, calculates position, sends 
 - [x] Low-pass position filtering
 
 ## 3. GPS Emulation (MAVLink)
-- [ ] Send position to FC via VISION_POSITION_ESTIMATE or GPS_INPUT
-- [ ] Configure FC to use external vision as position source
-- [ ] Heading/yaw forwarding
-- [ ] Confidence/quality indicator to FC
+- [x] Send position to FC via VISION_POSITION_ESTIMATE
+- [x] Heading/yaw forwarding
+- [x] Confidence/quality indicator to FC (covariance mapping)
+- [x] Configure FC to use external vision as position source
+- [x] ENU→NED coordinate frame conversion
+- [x] SET_GPS_GLOBAL_ORIGIN for non-GPS arming
 
 ## 4. Hardware & Deployment
 - [x] RPi Zero 2W deployment + setup script
@@ -52,7 +54,7 @@ RPi + Camera = Visual GPS emulator. Detects markers, calculates position, sends 
 - [x] Technical docs
 - [x] HTML documentation site
 - [ ] Wiring diagrams
-- [ ] FC configuration guide (EKF, vision parameters)
+- [x] FC configuration guide (EKF, vision parameters)
 
 ## Removed (FC handles natively)
 - ~~PID controller~~
