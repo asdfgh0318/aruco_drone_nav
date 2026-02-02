@@ -42,12 +42,13 @@ RPi + Camera = Visual GPS emulator. Detects markers, calculates position, sends 
 - [x] MAVLink test tool
 - [x] Detection test tool
 - [x] Marker spacing calculator
+- [x] SITL validation tool (tools/test_sitl.py, config/sitl_params.parm)
 
 ## 6. Testing
 - [x] Desktop detection testing
 - [x] RPi detection testing
 - [x] Camera calibration verified
-- [ ] SITL validation (ArduCopter + vision position input)
+- [x] SITL validation (ArduCopter + vision position input)
 - [ ] Verify FC accepts vision position data
 - [ ] Hover test with vision-based position
 - [ ] Full autonomous flight test

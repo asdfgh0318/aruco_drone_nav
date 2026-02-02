@@ -94,3 +94,13 @@ GPS_TYPE = 0            # Disable GPS (indoor)
 - Simplified main.py to detect → estimate → send loop
 - Old modules archived in src/deprecated/
 - Created CURRENT_PLAN.md as living roadmap
+
+### Session 4 (2026-02-03)
+- Built ArduCopter SITL from source (~ardupilot)
+- Created SITL validation tool (`tools/test_sitl.py`)
+- Created SITL param file (`config/sitl_params.parm`) and config (`config/sitl_config.yaml`)
+- Validated full vision→FC pipeline: params, EKF origin, streaming, convergence
+- Successfully armed, took off, hovered at 2m, and landed in SITL
+- Circle pattern test passed (0.189m error at 1.5m radius)
+- Created technical summary for Pawel (`docs/PAWEL_SUMMARY.md`)
+- Documented SITL results (`docs/SITL_RESULTS.md`)

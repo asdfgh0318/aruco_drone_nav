@@ -1,0 +1,12 @@
+# ArUco Vision GPS - SITL Configuration
+# For use with ArduCopter SITL (no hardware needed)
+
+serial:
+  port: "tcp:127.0.0.1:5760"       # SITL TCP connection (raw binary)
+  baud: 115200                      # Not used for TCP, but kept for interface
+
+control:
+  loop_rate_hz: 20                  # Vision position update rate (Hz)
+
+logging:
+  level: "DEBUG"

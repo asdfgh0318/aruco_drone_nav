@@ -1,0 +1,229 @@
+# ArUco Vision GPS - Technical Summary for Pawel
+
+## Project Overview
+
+Indoor drone positioning system using ceiling-mounted ArUco markers. A Raspberry Pi Zero 2W with an upward-facing USB camera detects markers, computes the drone's world-frame position via solvePnP, and streams `VISION_POSITION_ESTIMATE` messages to an ArduCopter flight controller over MAVLink UART. The FC treats this as its position source (replacing GPS) and handles all navigation, PID, missions, and failsafes natively via its EKF3. The RPi is a dumb sensor -- it only sees and reports.
+
+## Architecture
+
+```
+  Ceiling                    +-----------+
+  [Marker 0] [Marker 1] ... | marker_map.yaml  (known world positions)
+       |          |          +-----------+
+       v          v
+  +-----------------------------+
+  | RPi Zero 2W                 |
+  |                             |
+  |  USB Camera (640x480@15fps) |
+  |       |                     |
+  |       v                     |
+  |  ArucoDetector              |  camera_params.yaml (intrinsics)
+  |  - cv2.aruco.detectMarkers  |
+  |  - cv2.solvePnP per marker  |
+  |       |                     |
+  |       v                     |
+  |  PositionEstimator          |
+  |  - marker→world transform   |
+  |  - multi-marker fusion      |
+  |  - low-pass filter          |
+  |       |                     |
+  |       v                     |
+  |  MAVLinkInterface           |
+  |  - ENU→NED conversion       |
+  |  - VISION_POSITION_ESTIMATE |    UART 921600 baud
+  |  - SET_GPS_GLOBAL_ORIGIN    | ──────────────────────>
+  +-----------------------------+
+                                     +---------------------+
+                                     | Flight Controller   |
+                                     | ArduCopter          |
+                                     |                     |
+                                     | EKF3                |
+                                     |  - ExternalNav src  |
+                                     |  - Baro for alt     |
+                                     |                     |
+                                     | PID / Navigation    |
+                                     | Missions / RTL      |
+                                     | Failsafes           |
+                                     +---------------------+
+```
+
+## Module Map
+
+### Core (`src/`)
+
+| File | What it does |
+|------|-------------|
+| `main.py` | Entry point. Runs the detect→estimate→send loop at 20 Hz. Two modes: `run` (MAVLink) and `test` (console only). |
+| `aruco_detector.py` | Opens camera, detects DICT_6X6_250 markers with OpenCV. Returns `MarkerDetection` dataclass with corner coords, tvec/rvec per marker. Also has `CharucoDetector` for sub-pixel accuracy. |
+| `position_estimator.py` | Loads marker world positions from YAML. Transforms each detection from camera frame to world frame. Fuses multiple markers via distance-weighted average. Low-pass filters the result. Outputs `DroneState(x, y, z, yaw, confidence)`. |
+| `mavlink_interface.py` | Connects to FC via pymavlink. Sends `VISION_POSITION_ESTIMATE` at configurable rate. Also handles `SET_GPS_GLOBAL_ORIGIN`, arm/disarm, mode changes, telemetry reading. Standalone -- no project imports. |
+| `camera_calibration.py` | Loads/saves camera intrinsic parameters (matrix + distortion coefficients). Interactive calibration via chessboard. Standalone -- no project imports. |
+
+### Tools (`tools/`)
+
+| File | What it does |
+|------|-------------|
+| `test_sitl.py` | **SITL validation.** Connects to ArduCopter SITL, sets params, streams synthetic vision data, verifies EKF convergence. Can arm and fly. |
+| `debug_gui.py` | Tkinter GUI showing live video, marker overlay, position plot, telemetry. Connects to RPi's MJPEG stream. |
+| `camera_server.py` | MJPEG server running on RPi. Streams camera frames over HTTP for remote debugging. |
+| `calibrate_remote.py` | Captures calibration frames from MJPEG stream. Calibrates camera intrinsics remotely. |
+| `calibrate_camera.py` | Local camera calibration (wraps `camera_calibration.py`). |
+| `test_mavlink.py` | MAVLink connection test. Sends a few vision messages, reads telemetry. |
+| `test_aruco_detection.py` | ArUco detection test. Opens camera, detects markers, prints results. |
+| `bench_test.py` | Bench test with position/velocity visualization. |
+| `generate_markers.py` | Generates printable ArUco marker PDFs. |
+| `generate_charuco.py` | Generates ChArUco calibration boards. |
+| `generate_chessboard.py` | Generates chessboard calibration patterns. |
+| `marker_spacing.py` | Calculates required marker spacing for a given room/camera setup. |
+| `configurator_gui.py` | GUI for editing YAML config files. |
+
+### Config (`config/`)
+
+| File | What it does |
+|------|-------------|
+| `system_config.yaml` | Main config: serial port, baud rate, camera source, loop rate, marker dictionary. |
+| `camera_params.yaml` | Camera intrinsic calibration (matrix + distortion). Generated by calibration tools. |
+| `marker_map.yaml` | World positions (x, y, z, orientation) of each marker ID. |
+| `sitl_config.yaml` | Config for SITL testing (TCP connection instead of UART). |
+| `sitl_params.parm` | ArduCopter parameter file for vision-based flight (EKF3, VISO, no GPS/compass). |
+
+## Dependency Graph
+
+```
+                    camera_calibration.py    mavlink_interface.py
+                           |                         |
+                           v                         |
+                    aruco_detector.py                 |
+                      |          |                   |
+                      v          v                   v
+              position_estimator.py              (standalone)
+                      |
+                      v
+                   main.py ─────────────────> mavlink_interface.py
+
+Tools:
+  debug_gui ──> aruco_detector, position_estimator, camera_calibration
+  bench_test ──> aruco_detector, position_estimator, camera_calibration
+  test_aruco_detection ──> aruco_detector, camera_calibration
+  test_mavlink ──> mavlink_interface
+  test_sitl ──> mavlink_interface
+  calibrate_camera ──> camera_calibration
+  generate_markers ──> aruco_detector (ARUCO_DICTIONARIES)
+  generate_charuco ──> aruco_detector (ARUCO_DICTIONARIES)
+  camera_server, calibrate_remote, configurator_gui, marker_spacing ──> (standalone)
+```
+
+## Main Loop Data Flow
+
+```
+  Camera frame (640x480 BGR)
+       |
+       v
+  cv2.aruco.detectMarkers()
+       |
+       v
+  List[MarkerDetection]
+    .marker_id, .corners, .tvec, .rvec
+       |
+       v
+  PositionEstimator.estimate()
+    1. For each detected marker:
+       - Look up marker's world position from marker_map.yaml
+       - Invert camera-to-marker transform (solvePnP gives marker-in-camera)
+       - Apply marker's world position + orientation
+       - Result: drone position in world frame (ENU)
+    2. Multi-marker fusion:
+       - Weight by 1/distance (closer markers = more accurate)
+       - Weighted average of all marker-derived positions
+    3. Low-pass filter
+       |
+       v
+  DroneState(x, y, z, yaw, confidence)     [ENU frame]
+       |
+       v
+  ENU → NED conversion (in main.py):
+    NED_x = ENU_y  (North = ENU's Y)
+    NED_y = ENU_x  (East  = ENU's X)
+    NED_z = -ENU_z (Down  = -Up)
+       |
+       v
+  MAVLinkInterface.send_vision_position_estimate()
+       |
+       v
+  VISION_POSITION_ESTIMATE MAVLink message
+       |  UART @ 921600 baud
+       v
+  Flight Controller EKF3
+```
+
+## Coordinate Frame Transformation Chain
+
+```
+  Camera Frame (OpenCV)          Marker Frame              World Frame (ENU)         MAVLink (NED)
+  +-------+                     +--------+                 +--------+                +--------+
+  | X→right |  solvePnP        | X→right |  marker world  | X→East |  swap axes    | X→North|
+  | Y→down  | ──────────────>  | Y→down  | ────────────>  | Y→North| ───────────>  | Y→East |
+  | Z→forward|  (tvec, rvec)   | Z→out   |  pos + orient  | Z→Up   |  ENU→NED      | Z→Down |
+  +-------+                     +--------+                 +--------+                +--------+
+
+  Step 1: solvePnP gives marker pose in camera frame (tvec, rvec)
+  Step 2: Invert to get camera (=drone) pose relative to marker
+  Step 3: Apply marker's known world position and orientation
+  Step 4: Convert from ENU to NED for MAVLink/ArduCopter
+```
+
+## What's Tested vs Not
+
+### Tested (working)
+- [x] ArUco detection on RPi (real camera, real markers)
+- [x] Camera calibration (chessboard, ChArUco)
+- [x] Position estimation from detected markers
+- [x] MAVLink message construction and sending
+- [x] Debug GUI receives and displays live data
+- [x] MJPEG streaming from RPi to local machine
+- [x] SITL: FC accepts vision params (EKF3, VISO_TYPE, etc.)
+- [x] SITL: EKF origin set, EKF converges on vision data
+- [x] SITL: Vehicle arms in GUIDED mode with vision-only position
+- [x] SITL: Takeoff, hover at 2m, land cleanly
+- [x] SITL: Circle pattern tracking (0.189m error at 1.5m radius)
+- [x] ENU→NED coordinate conversion in main loop
+
+### Not Yet Tested
+- [ ] Real FC accepts VISION_POSITION_ESTIMATE over UART
+- [ ] Real FC EKF converges on vision data
+- [ ] Hover stability with real vision (jitter, latency)
+- [ ] Multi-marker fusion accuracy in real setup
+- [ ] Performance on RPi Zero 2W under flight conditions (thermal, vibration)
+- [ ] Failsafe behavior when markers lost
+- [ ] Full autonomous mission (waypoints via FC)
+
+## SITL Test Results (2026-02-03)
+
+Three test scenarios validated, all passing:
+
+| Test | Steps | Position Error |
+|------|-------|---------------|
+| Basic (params + stream + convergence) | 6/6 PASS | 0.004m |
+| Arm + guided flight (takeoff, hover, land) | 5/5 PASS | 0.003m |
+| Circle pattern (1.5m radius, 20s) | 4/4 PASS | 0.189m |
+
+Full results in `docs/SITL_RESULTS.md`.
+
+## Suggested Focus Areas
+
+1. **Connect real FC over UART** -- Verify the FC accepts vision data at `/dev/serial0` 921600 baud. This is the single biggest unknown.
+2. **Bench test with real markers** -- Position the RPi+camera under ceiling markers, run `test` mode, verify position accuracy and update rate.
+3. **Performance profiling on RPi Zero** -- The Zero 2W is slow. Measure actual FPS with detection enabled. May need to reduce resolution or detection parameters.
+4. **Marker layout for the room** -- Use `tools/marker_spacing.py` to calculate spacing. Print markers with `tools/generate_markers.py`.
+5. **Hover test** -- Once FC accepts vision data, attempt a tethered hover in GUIDED or POSHOLD mode.
+6. **Wiring** -- Document RPi-to-FC UART wiring (TX/RX cross, shared ground, voltage levels).
+
+## Questions for Pawel
+
+1. **Which flight controller?** The FC params are configured for ArduCopter. Which specific board will we use? (Pixhawk, Cube, Matek, etc.)
+2. **UART or USB?** Currently configured for `/dev/serial0` (GPIO UART). Would USB-serial be more reliable?
+3. **Altitude source**: Currently `EK3_SRC1_POSZ = 1` (barometer). Should we switch to vision altitude (`= 6`) once proven? Baro is safer but drifts indoors with doors/wind.
+4. **Room dimensions and ceiling height?** Needed to calculate marker spacing and camera FOV coverage.
+5. **Marker size**: Currently 20cm. Is this printable/practical for the target ceiling height?
+6. **Flight controller firmware version**: Should we target stable or latest ArduCopter?
+7. **Safety**: Any tethered test rig available for first flights?
