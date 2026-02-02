@@ -621,6 +621,65 @@ class MAVLinkInterface:
             0
         )
 
+    def send_vision_position_estimate(
+        self,
+        x: float,
+        y: float,
+        z: float,
+        roll: float = 0.0,
+        pitch: float = 0.0,
+        yaw: float = 0.0,
+        confidence: float = 1.0
+    ):
+        """
+        Send VISION_POSITION_ESTIMATE to the flight controller.
+
+        This is the core GPS emulation function. The FC's EKF uses these
+        messages as a position source when configured for external navigation.
+
+        Args:
+            x: X position in meters (East in ENU frame)
+            y: Y position in meters (North in ENU frame)
+            z: Z position in meters (Up in ENU frame)
+            roll: Roll angle in radians
+            pitch: Pitch angle in radians
+            yaw: Yaw angle in radians
+            confidence: Position confidence 0-1 (mapped to covariance)
+        """
+        if self.connection is None:
+            return
+
+        usec = int(time.time() * 1e6)
+
+        # Map confidence to covariance (lower confidence = higher covariance)
+        # confidence=1.0 -> cov=0.01, confidence=0.1 -> cov=1.0
+        pos_cov = max(0.01, 0.01 / max(confidence, 0.01))
+        ang_cov = pos_cov * 2.0
+
+        # Upper-right triangle of 6x6 covariance matrix (21 elements)
+        # [xx, xy, xz, xR, xP, xY,
+        #     yy, yz, yR, yP, yY,
+        #         zz, zR, zP, zY,
+        #             RR, RP, RY,
+        #                 PP, PY,
+        #                     YY]
+        covariance = [
+            pos_cov, 0, 0, 0, 0, 0,
+                     pos_cov, 0, 0, 0, 0,
+                              pos_cov, 0, 0, 0,
+                                       ang_cov, 0, 0,
+                                                ang_cov, 0,
+                                                         ang_cov
+        ]
+
+        self.connection.mav.vision_position_estimate_send(
+            usec,
+            x, y, z,
+            roll, pitch, yaw,
+            covariance,
+            0  # reset_counter
+        )
+
     def set_home_position(self):
         """Set current position as home."""
         if self.connection is None:

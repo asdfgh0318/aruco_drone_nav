@@ -291,7 +291,7 @@ class ConfiguratorGUI:
 
         ttk.Separator(tools_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
 
-        ttk.Button(tools_frame, text="Ground Test Mode", command=self._run_ground_test, **btn_style).pack(pady=3)
+        ttk.Button(tools_frame, text="Vision GPS Test", command=self._run_vision_gps_test, **btn_style).pack(pady=3)
 
         # === Control Buttons ===
         ctrl_frame = ttk.LabelFrame(scrollable_frame, text="Control", padding=10)
@@ -412,14 +412,14 @@ class ConfiguratorGUI:
         self.status_var.set("Running MAVLink test...")
         self.runner.run(cmd, cwd=str(self.project_dir))
 
-    def _run_ground_test(self):
-        """Run main system in ground test mode."""
+    def _run_vision_gps_test(self):
+        """Run Vision GPS in test mode (no MAVLink)."""
         cmd = self._get_cmd_base() + [
             '-m', 'src.main',
-            '--mode', 'ground_test',
+            '--mode', 'test',
             '--config', 'config/system_config.yaml'
         ]
-        self.status_var.set("Running ground test mode...")
+        self.status_var.set("Running Vision GPS test...")
         self.runner.run(cmd, cwd=str(self.project_dir))
 
     def _stop_process(self):

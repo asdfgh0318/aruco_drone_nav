@@ -153,14 +153,14 @@ echo "[7/8] Creating systemd service..."
 
 cat > /etc/systemd/system/aruco-drone.service << SYSTEMD
 [Unit]
-Description=ArUco Drone Navigation System
+Description=ArUco Vision GPS
 After=network.target
 
 [Service]
 Type=simple
 User=$ACTUAL_USER
 WorkingDirectory=$PROJECT_DIR
-ExecStart=$PROJECT_DIR/venv/bin/python3 -m src.main --config config/system_config.yaml --mode ground_test
+ExecStart=$PROJECT_DIR/venv/bin/python3 -m src.main --config config/system_config.yaml --mode run
 Restart=on-failure
 RestartSec=5
 

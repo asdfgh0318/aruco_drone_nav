@@ -98,8 +98,11 @@ python3 tools/bench_test.py
 # MAVLink test
 python3 tools/test_mavlink.py
 
-# Full ground test
-python3 -m src.main --mode ground_test
+# Vision GPS test (prints position, no MAVLink)
+python3 -m src.main --mode test
+
+# Vision GPS run (sends position to FC via MAVLink)
+python3 -m src.main --mode run
 ```
 
 ### Headless Operation (SSH)

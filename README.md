@@ -1,31 +1,18 @@
-# ArUco Drone Navigation System
+# ArUco Vision GPS
 
-**Vision-based indoor drone navigation using ceiling-mounted ArUco markers**
+**Vision-based GPS emulator for indoor drones using ceiling-mounted ArUco markers**
 
-A Python-based navigation system for Raspberry Pi Zero that enables autonomous indoor drone flight using ArUco marker detection, MAVLink communication with ArduCopter, and mission execution from VR-generated waypoints.
+A Python system for Raspberry Pi Zero that detects ArUco markers, calculates world-frame position, and sends it to an ArduCopter flight controller via MAVLink. The FC handles all navigation, PID control, missions, and failsafes natively.
 
-## Overview
-
-This system provides:
-- **Phase 1**: Single marker hover control (position hold under one marker)
-- **Phase 2**: Multi-marker waypoint navigation with JSON mission files
-- **VR Integration**: Accepts waypoints from VR planning software, records flight paths for iteration
-- **Safety Features**: Marker loss prediction, failsafe landing, battery monitoring
-
-### System Architecture
+## Architecture
 
 ```
-┌─────────────────┐     JSON Mission      ┌─────────────────┐
-│   VR Planning   │ ──────────────────►   │                 │
-│     Software    │                       │    RPi Zero     │
-│                 │ ◄──────────────────   │   (onboard)     │
-└─────────────────┘   Flight Recording    └────────┬────────┘
-                                                   │ UART/Serial
-                                                   │ MAVLink
-┌─────────────────┐                       ┌────────▼────────┐
-│  Ceiling-mounted│     USB Camera        │   ArduCopter    │
-│  ArUco Markers  │ ◄──── (facing up) ────│      FC         │
-└─────────────────┘                       └─────────────────┘
+Ceiling-mounted       USB Camera          RPi Zero 2W              Flight Controller
+ArUco Markers    -->  (facing up)    -->  Vision GPS          -->  ArduCopter EKF
+                                          - Detect markers         - Position estimation
+                                          - Estimate position      - PID control
+                                          - VISION_POSITION_       - Navigation
+                                            ESTIMATE via MAVLink   - Missions & failsafes
 ```
 
 ## Hardware Requirements
@@ -93,6 +80,18 @@ cd buildroot
 
 See [docs/TESTING.md](docs/TESTING.md) for complete testing guide.
 
+## Running the System
+
+### Test Mode (no MAVLink, prints position to console)
+```bash
+python3 -m src.main --mode test --config config/system_config.yaml
+```
+
+### Run Mode (sends VISION_POSITION_ESTIMATE to FC)
+```bash
+python3 -m src.main --mode run --config config/system_config.yaml
+```
+
 ## Tools
 
 | Tool | Description | Usage |
@@ -110,58 +109,25 @@ See [docs/TESTING.md](docs/TESTING.md) for complete testing guide.
 
 ## Debug GUI (Network Streaming)
 
-The Debug GUI provides real-time visualization when testing with the RPi remotely.
-
-### Architecture
 ```
 RPi (10.156.64.251)                    Local Machine
-┌─────────────────┐                    ┌─────────────────┐
-│ camera_server.py│ ──── MJPEG ─────>  │ debug_gui.py    │
-│ - Capture frames│      Port 8000     │ - Display video │
-│ - JPEG compress │                    │ - Run detection │
-└─────────────────┘                    │ - Show telemetry│
-                                       └─────────────────┘
++------------------+                   +------------------+
+| camera_server.py | ---- MJPEG ---->  | debug_gui.py     |
+| - Capture frames |      Port 8000    | - Display video  |
+| - JPEG compress  |                   | - Run detection  |
++------------------+                   | - Show telemetry |
+                                       +------------------+
 ```
 
-### Usage
 ```bash
 # On RPi: Start camera server
 python3 tools/camera_server.py --port 8000
 
 # On local machine: Launch debug GUI
 python3 tools/debug_gui.py --host 10.156.64.251 --port 8000
-```
 
-### Features
-- **Live Video**: Real-time stream with marker detection overlay
-- **Telemetry Panel**: Marker IDs, distances, positions, yaw angles
-- **Marker Map**: Top-down visualization of detected markers
-- **Recording**: Save trajectory and marker positions to JSON
-
-### Remote Calibration
-```bash
-# Calibrate camera over network (show chessboard to camera)
+# Remote calibration
 python3 tools/calibrate_remote.py --host 10.156.64.251 --port 8000
-```
-
-## Running the System
-
-### Ground Test Mode (No Flight)
-Test detection and control calculations without arming:
-```bash
-python3 -m src.main --mode ground_test --config config/system_config.yaml
-```
-
-### Phase 1: Single Marker Hover
-Hover under a single marker with position hold:
-```bash
-python3 -m src.main --mode hover --altitude 1.5
-```
-
-### Phase 2: Mission Execution
-Execute a mission from JSON file:
-```bash
-python3 -m src.main --mode mission --mission missions/sample_square.json
 ```
 
 ## Configuration
@@ -180,6 +146,9 @@ camera:
 aruco:
   dictionary: "DICT_6X6_250"
   marker_size_m: 0.20
+
+control:
+  loop_rate_hz: 20
 ```
 
 ### Marker Map (`config/marker_map.yaml`)
@@ -193,88 +162,43 @@ markers:
     orientation: 0
 ```
 
-## Mission File Format
-
-JSON format compatible with VR planning software:
-```json
-{
-  "mission_id": "flight_001",
-  "waypoints": [
-    {"x": 0.0, "y": 0.0, "z": 1.5, "yaw": 0, "hold_time": 2.0},
-    {"x": 1.5, "y": 0.0, "z": 1.5, "yaw": 0, "hold_time": 1.0}
-  ],
-  "settings": {
-    "max_speed": 0.3,
-    "position_tolerance": 0.15
-  }
-}
-```
-
 ## Project Structure
 
 ```
 aruco_drone_nav/
-├── config/                     # Configuration files
-├── src/                        # Core navigation code
-│   ├── aruco_detector.py       # Marker detection
-│   ├── position_estimator.py   # World position estimation
-│   ├── mavlink_interface.py    # Flight controller communication
-│   ├── mission_executor.py     # Waypoint navigation
-│   └── main.py                 # Main control loop
-├── tools/                      # Testing and utility tools
-│   ├── debug_gui.py            # Debug GUI (video, telemetry, map)
-│   ├── camera_server.py        # RPi MJPEG streaming server
-│   ├── calibrate_remote.py     # Network-based calibration
-│   ├── bench_test.py           # Position/command visualization
-│   ├── configurator_gui.py     # GUI configurator
-│   └── ...
-├── buildroot/                  # Minimal Linux image builder
-├── rpi_setup/                  # Raspbian setup scripts
-├── markers/                    # Generated marker PDFs
-├── missions/                   # Mission JSON files
-├── recordings/                 # Flight recordings
-└── docs/                       # Documentation
-    ├── TESTING.md              # Complete testing guide
-    ├── TECHNICAL.md            # Technical documentation
-    └── PLAN_v1.md              # Implementation plan
++-- config/                     # Configuration files
++-- src/                        # Core system
+|   +-- aruco_detector.py       # Marker detection + pose estimation
+|   +-- position_estimator.py   # World position from markers
+|   +-- mavlink_interface.py    # MAVLink (VISION_POSITION_ESTIMATE)
+|   +-- camera_calibration.py   # Camera intrinsic calibration
+|   +-- main.py                 # Vision GPS main loop
+|   +-- deprecated/             # Old PID/mission/failsafe code
++-- tools/                      # Testing and utility tools
++-- buildroot/                  # Minimal Linux image builder
++-- rpi_setup/                  # Raspbian setup scripts
++-- markers/                    # Generated marker PDFs
++-- docs/                       # Documentation
+```
+
+## FC Configuration (ArduCopter)
+
+To use vision position data, configure the flight controller:
+
+```
+VISO_TYPE = 1          # MAVLink vision
+EK3_SRC1_POSXY = 6     # ExternalNav
+EK3_SRC1_POSZ = 6      # ExternalNav
+EK3_SRC1_YAW = 6       # ExternalNav (or 1 for compass)
+GPS_TYPE = 0            # Disable GPS (indoor)
 ```
 
 ## Documentation
 
-- **[TESTING.md](docs/TESTING.md)** - Complete testing guide with checklists
+- **[TESTING.md](docs/TESTING.md)** - Complete testing guide
 - **[TECHNICAL.md](docs/TECHNICAL.md)** - Technical details and algorithms
-- **[CLAUDE.md](CLAUDE.md)** - AI session resume instructions
-- **[buildroot/README.md](buildroot/README.md)** - Minimal Linux image
+- **[CURRENT_PLAN.md](CURRENT_PLAN.md)** - Project roadmap
 - **[rpi_setup/README.md](rpi_setup/README.md)** - Raspbian setup guide
-
-## Safety Considerations
-
-1. **Always test in SITL first** - Use ArduCopter Software-In-The-Loop simulator
-2. **Tethered tests** - Use safety tether for initial real hardware flights
-3. **Marker loss failsafe** - System lands if markers lost for >2 seconds
-4. **Battery monitoring** - Auto-land on low battery
-5. **RC override** - Always have RC transmitter ready for manual control
-6. **Watchdog** - Buildroot image includes hardware watchdog for auto-recovery
-
-## Troubleshooting
-
-See [docs/TESTING.md](docs/TESTING.md) for detailed troubleshooting guide.
-
-### Quick Fixes
-
-```bash
-# Camera not detected
-ls /dev/video*
-sudo usermod -a -G video $USER
-
-# Serial permission denied
-sudo usermod -a -G dialout $USER
-
-# Poor marker detection
-# - Ensure markers are flat and well-lit
-# - Verify --marker-size matches actual printed size
-# - Run camera calibration
-```
 
 ## License
 
@@ -282,9 +206,9 @@ Proprietary - Warsaw University of Technology
 
 ## Authors
 
-- Adam Koszałka
+- Adam Koszalka
 - Claude Code (AI Assistant)
 
 ---
 
-*Last updated: 2026-01-23*
+*Last updated: 2026-02-02*
