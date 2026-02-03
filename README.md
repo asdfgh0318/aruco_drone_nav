@@ -247,7 +247,7 @@ See [docs/SITL_RESULTS.md](docs/SITL_RESULTS.md) for full results and reproducti
 
 ## Documentation
 
-- **[HTML Docs](docs/index.html)** - Browse documentation locally
+- **[HTML Docs](docs/index.html)** - Open `docs/index.html` in a browser (`xdg-open docs/index.html`)
 - **[FC_CONFIG.md](docs/FC_CONFIG.md)** - Flight controller configuration guide
 - **[SITL_RESULTS.md](docs/SITL_RESULTS.md)** - SITL test results and reproduction
 - **[PAWEL_SUMMARY.md](docs/PAWEL_SUMMARY.md)** - Technical architecture summary
