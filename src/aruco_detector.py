@@ -212,10 +212,15 @@ class ArucoDetector:
         )
         self.aruco_params = cv2.aruco.DetectorParameters()
 
-        # Optimize detection parameters for speed
+        # Optimize detection parameters for robustness
         self.aruco_params.adaptiveThreshConstant = 7
-        self.aruco_params.minMarkerPerimeterRate = 0.03
+        self.aruco_params.minMarkerPerimeterRate = 0.02  # Detect smaller markers
         self.aruco_params.maxMarkerPerimeterRate = 4.0
+        self.aruco_params.polygonalApproxAccuracyRate = 0.05  # More forgiving shape
+        self.aruco_params.minCornerDistanceRate = 0.02  # Allow closer corners
+        self.aruco_params.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
+        self.aruco_params.cornerRefinementWinSize = 5
+        self.aruco_params.cornerRefinementMaxIterations = 50
 
         # Create detector
         self.detector = cv2.aruco.ArucoDetector(

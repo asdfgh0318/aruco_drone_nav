@@ -38,6 +38,7 @@ RPi Zero 2W (companion)              Flight Controller
 | `tools/debug_gui.py` | Debug GUI (runs on local machine) |
 | `tools/camera_server.py` | MJPEG streaming (runs on RPi) |
 | `tools/calibrate_remote.py` | Network calibration tool |
+| `tools/position_viewer.py` | Position visualization (runs on laptop) |
 | `config/system_config.yaml` | System configuration |
 | `config/camera_params.yaml` | Camera calibration data |
 | `config/marker_map.yaml` | Marker world positions |
@@ -52,20 +53,32 @@ python3 -m src.main --mode test --config config/system_config.yaml
 
 # Run mode (sends to FC)
 python3 -m src.main --mode run --config config/system_config.yaml
+
+# Stream mode (HTTP server for remote visualization)
+python3 -m src.main --mode stream --port 8001
 ```
 
 ### Connect to RPi
 ```bash
-ssh pi@10.156.64.251  # password: raspberry
+./rpi_cmd.sh              # Interactive shell
+./rpi_cmd.sh "command"    # Run command
+./sync_to_rpi.sh          # Sync code to RPi
 ```
 
 ### Debug GUI (on local machine)
 ```bash
-python3 tools/debug_gui.py --host 10.156.64.251 --port 8000
+python3 tools/debug_gui.py --host aruconav.local --port 8000
+```
+
+### Position Viewer (on local machine)
+```bash
+# Visualize position streamed from RPi
+python3 tools/position_viewer.py --host aruconav.local --port 8001
 ```
 
 ## Hardware Setup
-- **RPi Address**: `10.156.64.251`
+- **RPi Hostname**: `aruconav.local` (IP: `10.59.24.251`)
+- **RPi User**: `aruconav` / password: `dupa1234`
 - **Camera**: USB camera at `/dev/video0`, 640x480 @ 15 FPS
 - **Markers**: ChArUco Diamond (DICT_4X4_50), ~64cm total size
 - **Serial**: `/dev/serial0` at 921600 baud
@@ -114,3 +127,43 @@ GPS_TYPE = 0            # Disable GPS (indoor)
 - Changed dictionary from DICT_6X6_250 to DICT_4X4_50
 - Generated diamond markers and ChArUco calibration board in `markers/`
 - Fixed `generate_charuco.py` for OpenCV 4.x API compatibility
+
+### Session 6 (2026-02-03)
+- **Added HTTP position streaming** for flight simulation testing
+- Added `PositionServer` class to `src/main.py` with `/position` JSON endpoint
+- Added `--mode stream` to run detection on RPi and serve positions via HTTP
+- Created `tools/position_viewer.py` - top-down visualization with:
+  - Marker positions from `marker_map.yaml`
+  - Drone position with yaw arrow
+  - Position history trail
+  - Live stats (detection rate, confidence, uptime)
+  - Zoom controls (+/-), trail clear (c)
+- Added `vision_server.port` to `config/system_config.yaml`
+- Fixed bug: position server was overwriting valid position with None on empty frames
+- **Tuned ArUco detector parameters** - improved detection rate from 10% to 58%:
+  - Added corner refinement (CORNER_REFINE_SUBPIX)
+  - Adjusted minMarkerPerimeterRate, polygonalApproxAccuracyRate
+- Identified issue: Diamond markers require all 4 ArUco markers visible (strict)
+
+## TODO - Next Session
+
+### Debug Tool: Frame + Detection Viewer
+Create a tool that shows **both** the camera frame AND detection results to separate:
+- Camera issues (focus, exposure, framing)
+- ArUco detection issues (parameters, marker quality)
+- WiFi/streaming issues
+
+**Approach**: RPi sends occasional JPEG frames + detection overlay via HTTP, laptop displays them.
+
+```
+GET /debug-frame  →  JPEG with detection boxes drawn
+GET /position     →  JSON position (existing)
+```
+
+This allows visual verification of what RPi camera sees vs what it detects.
+
+### Fallback: Single ArUco Markers
+If diamond detection remains unreliable, switch to single ArUco markers:
+- Higher detection rate (only need 1 marker visible, not 4)
+- Simpler setup
+- Less robust to partial occlusion but more forgiving overall
