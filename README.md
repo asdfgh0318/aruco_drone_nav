@@ -1,8 +1,10 @@
 # ArUco Vision GPS
 
-**Vision-based GPS emulator for indoor drones using ceiling-mounted ArUco markers**
+**Vision-based GPS emulator for indoor drones using ceiling-mounted ChArUco Diamond markers**
 
-A Python system for Raspberry Pi Zero 2W that detects ArUco markers, calculates world-frame position, and sends `VISION_POSITION_ESTIMATE` to an ArduCopter flight controller via MAVLink. The FC handles all navigation, PID control, missions, and failsafes natively.
+A Python system for Raspberry Pi Zero 2W that detects ChArUco Diamond markers, calculates world-frame position, and sends `VISION_POSITION_ESTIMATE` to an ArduCopter flight controller via MAVLink. The FC handles all navigation, PID control, missions, and failsafes natively.
+
+Diamond markers provide better robustness than single ArUco markers due to redundancy (4 markers per diamond) and partial occlusion tolerance.
 
 ## Architecture
 
@@ -21,7 +23,7 @@ ArUco Markers    -->  (facing up)    -->  Vision GPS          -->  ArduCopter EK
 - **Drone**: ArduCopter-compatible flight controller (Pixhawk, etc.)
 - **Companion Computer**: Raspberry Pi Zero W/2W
 - **Camera**: USB camera (facing upward toward ceiling)
-- **Markers**: Printed ArUco markers (20cm recommended) mounted on ceiling
+- **Markers**: Printed ChArUco Diamond markers (~64cm) mounted on ceiling
 - **Connection**: UART serial between RPi and flight controller
 
 ## Quick Start
@@ -36,18 +38,17 @@ python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 
-# Generate test targets
-python3 tools/generate_markers.py --ids 0,1,2,3,4 --size 20 --output markers/
-python3 tools/generate_chessboard.py --output markers/
-python3 tools/generate_charuco.py --output markers/
+# Generate diamond markers and calibration board
+python3 tools/generate_diamonds.py --ids "0_1_2_3,4_5_6_7" -o markers/
+python3 tools/generate_charuco.py --squares 7x5 -o markers/
 
-# Print markers/markers_DICT_6X6_250.pdf at 100% scale
+# Print at 100% scale (no fit-to-page)
 
-# Calibrate camera
+# Calibrate camera (use ChArUco board)
 python3 tools/calibrate_camera.py --camera 0
 
-# Test detection
-python3 tools/test_aruco_detection.py --camera 0 --marker-size 0.20
+# Test diamond detection
+python3 tools/test_aruco_detection.py --diamond --camera 0
 
 # Run bench test (shows position + velocity commands)
 python3 tools/bench_test.py --camera 0 --marker-size 0.20
@@ -123,8 +124,9 @@ python3 -m src.main --mode run --config config/system_config.yaml
 | `calibrate_camera.py` | Local camera intrinsic calibration | `python3 tools/calibrate_camera.py` |
 | `test_aruco_detection.py` | Live marker detection test | `python3 tools/test_aruco_detection.py` |
 | `test_mavlink.py` | MAVLink connection test | `python3 tools/test_mavlink.py` |
-| `generate_markers.py` | Create printable ArUco markers | `python3 tools/generate_markers.py` |
-| `generate_charuco.py` | Create ChArUco calibration boards | `python3 tools/generate_charuco.py` |
+| `generate_diamonds.py` | Create ChArUco Diamond markers | `python3 tools/generate_diamonds.py --ids "0_1_2_3"` |
+| `generate_charuco.py` | Create ChArUco calibration boards | `python3 tools/generate_charuco.py --squares 7x5` |
+| `generate_markers.py` | Create single ArUco markers | `python3 tools/generate_markers.py` |
 | `generate_chessboard.py` | Create chessboard calibration pattern | `python3 tools/generate_chessboard.py` |
 | `marker_spacing.py` | Calculate marker spacing for room/camera | `python3 tools/marker_spacing.py` |
 | `configurator_gui.py` | GUI for testing/configuration | `python3 tools/configurator_gui.py` |
@@ -166,8 +168,11 @@ camera:
   height: 480
 
 aruco:
-  dictionary: "DICT_6X6_250"
-  marker_size_m: 0.20
+  dictionary: "DICT_4X4_50"
+
+diamond:
+  square_size_m: 0.20
+  marker_size_m: 0.15
 
 control:
   loop_rate_hz: 20
@@ -182,11 +187,11 @@ serial:
 
 ### Marker Map (`config/marker_map.yaml`)
 ```yaml
-markers:
-  - id: 0
+diamonds:
+  - id: "0_1_2_3"
     position: [0.0, 0.0, 3.0]   # X, Y, Z (ceiling height)
     orientation: 0
-  - id: 1
+  - id: "4_5_6_7"
     position: [2.0, 0.0, 3.0]
     orientation: 0
 ```
@@ -203,7 +208,7 @@ aruco_drone_nav/
 |   +-- sitl_params.parm        # ArduCopter params for vision flight
 +-- src/                        # Core system
 |   +-- main.py                 # Vision GPS main loop (detect→estimate→send)
-|   +-- aruco_detector.py       # Marker detection + pose estimation
+|   +-- aruco_detector.py       # Diamond/ArUco detection + pose estimation
 |   +-- position_estimator.py   # World position from markers (multi-marker fusion)
 |   +-- mavlink_interface.py    # MAVLink (VISION_POSITION_ESTIMATE)
 |   +-- camera_calibration.py   # Camera intrinsic calibration

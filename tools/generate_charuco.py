@@ -29,7 +29,7 @@ def generate_charuco_board(
     squares_y: int = 5,
     square_size_cm: float = 4.0,
     marker_size_cm: float = 3.0,
-    dictionary: str = "DICT_6X6_250",
+    dictionary: str = "DICT_4X4_50",
     output_dir: str = "markers",
     dpi: int = 300
 ):
@@ -64,18 +64,18 @@ def generate_charuco_board(
     markers_per_board = (squares_x * squares_y) // 2
     id_offset = board_id * markers_per_board
 
-    # Create board
+    # Set marker IDs based on board_id offset
+    ids = np.arange(id_offset, id_offset + markers_per_board, dtype=np.int32)
+
+    # Create board with custom IDs (5th parameter)
     board = cv2.aruco.CharucoBoard(
         (squares_x, squares_y),
         square_size_cm / 100.0,   # Convert to meters
         marker_size_cm / 100.0,
-        aruco_dict
+        aruco_dict,
+        ids
     )
     board.setLegacyPattern(False)
-
-    # Set marker IDs based on board_id offset
-    ids = np.arange(id_offset, id_offset + markers_per_board, dtype=np.int32)
-    board.setIds(ids)
 
     # Generate image
     pixels_per_cm = dpi / 2.54
@@ -159,8 +159,8 @@ def main():
     parser.add_argument(
         '--dictionary', '-d',
         type=str,
-        default='DICT_6X6_250',
-        help='ArUco dictionary (default: DICT_6X6_250)'
+        default='DICT_4X4_50',
+        help='ArUco dictionary (default: DICT_4X4_50)'
     )
     parser.add_argument(
         '--output', '-o',

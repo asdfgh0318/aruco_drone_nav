@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
-ArUco Detection Test Tool
+ArUco/Diamond Detection Test Tool
 
-Live preview of ArUco marker detection with pose estimation.
+Live preview of ArUco marker or Diamond marker detection with pose estimation.
 Useful for verifying marker detection and camera setup.
 
 Usage:
     python test_aruco_detection.py [--camera 0] [--marker-size 0.20]
+    python test_aruco_detection.py --diamond --square-size 0.20 --marker-size 0.10
 """
 
 import argparse
@@ -19,13 +20,13 @@ from pathlib import Path
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.aruco_detector import ArucoDetector, ARUCO_DICTIONARIES
+from src.aruco_detector import ArucoDetector, DiamondDetector, ARUCO_DICTIONARIES
 from src.camera_calibration import CameraCalibration
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Test ArUco marker detection"
+        description="Test ArUco/Diamond marker detection"
     )
     parser.add_argument(
         '--camera', '-c',
@@ -42,15 +43,26 @@ def main():
     parser.add_argument(
         '--dictionary', '-d',
         type=str,
-        default='DICT_6X6_250',
+        default='DICT_4X4_50',
         choices=list(ARUCO_DICTIONARIES.keys()),
-        help='ArUco dictionary (default: DICT_6X6_250)'
+        help='ArUco dictionary (default: DICT_4X4_50)'
     )
     parser.add_argument(
         '--marker-size', '-s',
         type=float,
+        default=0.10,
+        help='Marker size in meters (default: 0.10)'
+    )
+    parser.add_argument(
+        '--diamond',
+        action='store_true',
+        help='Use Diamond marker detection instead of single ArUco'
+    )
+    parser.add_argument(
+        '--square-size',
+        type=float,
         default=0.20,
-        help='Marker size in meters (default: 0.20)'
+        help='Diamond center square size in meters (default: 0.20)'
     )
     parser.add_argument(
         '--width',
@@ -93,20 +105,40 @@ def main():
         print("Using default camera parameters")
 
     # Create detector
-    detector = ArucoDetector(
-        camera_id=args.camera,
-        camera_matrix=camera_matrix,
-        dist_coeffs=dist_coeffs,
-        dictionary=args.dictionary,
-        marker_size_m=args.marker_size,
-        resolution=(args.width, args.height)
-    )
+    if args.diamond:
+        detector = DiamondDetector(
+            camera_id=args.camera,
+            camera_matrix=camera_matrix,
+            dist_coeffs=dist_coeffs,
+            dictionary=args.dictionary,
+            square_size_m=args.square_size,
+            marker_size_m=args.marker_size,
+            resolution=(args.width, args.height)
+        )
+        mode_name = "DIAMOND"
+    else:
+        detector = ArucoDetector(
+            camera_id=args.camera,
+            camera_matrix=camera_matrix,
+            dist_coeffs=dist_coeffs,
+            dictionary=args.dictionary,
+            marker_size_m=args.marker_size,
+            resolution=(args.width, args.height)
+        )
+        mode_name = "ArUco"
 
     print("\n" + "=" * 50)
-    print("      ArUco DETECTION TEST")
+    print(f"      {mode_name} DETECTION TEST")
     print("=" * 50)
-    print(f"\nDictionary: {args.dictionary}")
-    print(f"Marker size: {args.marker_size * 100:.1f} cm")
+    print(f"\nMode: {mode_name}")
+    print(f"Dictionary: {args.dictionary}")
+    if args.diamond:
+        print(f"Square size: {args.square_size * 100:.1f} cm")
+        print(f"Marker size: {args.marker_size * 100:.1f} cm")
+        total = args.square_size + 2 * args.marker_size
+        print(f"Total diamond size: {total * 100:.1f} cm")
+    else:
+        print(f"Marker size: {args.marker_size * 100:.1f} cm")
     print(f"Resolution: {args.width}x{args.height}")
     print("\nControls:")
     print("  Q - Quit")
@@ -135,8 +167,14 @@ def main():
                 x, y, z = det.position
                 roll, pitch, yaw = det.get_euler_angles()
 
+                # Handle both MarkerDetection and DiamondDetection
+                if hasattr(det, 'id_string'):
+                    marker_id = det.id_string
+                else:
+                    marker_id = str(det.marker_id)
+
                 info = (
-                    f"ID:{det.marker_id} "
+                    f"ID:{marker_id} "
                     f"pos=({x:+.3f}, {y:+.3f}, {z:.3f})m "
                     f"yaw={yaw:+.1f}deg"
                 )
@@ -156,7 +194,7 @@ def main():
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1
             )
 
-            cv2.imshow("ArUco Detection Test", display)
+            cv2.imshow(f"{mode_name} Detection Test", display)
 
             key = cv2.waitKey(1) & 0xFF
 

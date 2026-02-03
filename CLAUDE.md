@@ -4,7 +4,7 @@ This document provides context for AI assistants continuing work on this project
 
 ## Project Overview
 
-**ArUco Vision GPS** - Vision-based GPS emulator for indoor drones using ceiling-mounted ArUco markers on Raspberry Pi Zero 2W. The RPi detects markers, calculates world-frame position, and sends VISION_POSITION_ESTIMATE to the flight controller via MAVLink. The FC handles all navigation, PID, missions, and failsafes.
+**ArUco Vision GPS** - Vision-based GPS emulator for indoor drones using ceiling-mounted ChArUco Diamond markers on Raspberry Pi Zero 2W. The RPi detects diamond markers (4 ArUco markers per diamond), calculates world-frame position, and sends VISION_POSITION_ESTIMATE to the flight controller via MAVLink. The FC handles all navigation, PID, missions, and failsafes.
 
 **Project Location**: `/home/adam/ŻYCIE/PRACA/aruco_drone_nav`
 
@@ -31,7 +31,7 @@ RPi Zero 2W (companion)              Flight Controller
 | File | Purpose |
 |------|---------|
 | `src/main.py` | Vision GPS main loop (detect → estimate → send) |
-| `src/aruco_detector.py` | Marker detection with OpenCV |
+| `src/aruco_detector.py` | Diamond/ArUco detection with OpenCV |
 | `src/position_estimator.py` | World-frame position from markers |
 | `src/mavlink_interface.py` | MAVLink communication (VISION_POSITION_ESTIMATE) |
 | `src/camera_calibration.py` | Camera intrinsic calibration |
@@ -67,7 +67,7 @@ python3 tools/debug_gui.py --host 10.156.64.251 --port 8000
 ## Hardware Setup
 - **RPi Address**: `10.156.64.251`
 - **Camera**: USB camera at `/dev/video0`, 640x480 @ 15 FPS
-- **ArUco**: DICT_6X6_250 dictionary, 20cm markers
+- **Markers**: ChArUco Diamond (DICT_4X4_50), ~64cm total size
 - **Serial**: `/dev/serial0` at 921600 baud
 
 ## FC Configuration (ArduCopter)
@@ -104,3 +104,13 @@ GPS_TYPE = 0            # Disable GPS (indoor)
 - Circle pattern test passed (0.189m error at 1.5m radius)
 - Created technical summary for Pawel (`docs/PAWEL_SUMMARY.md`)
 - Documented SITL results (`docs/SITL_RESULTS.md`)
+
+### Session 5 (2026-02-03)
+- **Replaced ArUco with ChArUco Diamond markers** for better robustness
+- Added `DiamondDetector` class and `DiamondDetection` dataclass
+- Updated `PositionEstimator` to use string marker IDs (`"0_1_2_3"`)
+- Created `tools/generate_diamonds.py` using OpenCV's `drawCharucoDiamond()`
+- Updated all tools for diamond support (`--diamond` flag)
+- Changed dictionary from DICT_6X6_250 to DICT_4X4_50
+- Generated diamond markers and ChArUco calibration board in `markers/`
+- Fixed `generate_charuco.py` for OpenCV 4.x API compatibility

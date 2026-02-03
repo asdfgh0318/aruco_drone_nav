@@ -16,7 +16,7 @@ import numpy as np
 from pathlib import Path
 from typing import Optional
 
-from .aruco_detector import ArucoDetector
+from .aruco_detector import DiamondDetector
 from .position_estimator import PositionEstimator, DroneState
 
 logger = logging.getLogger(__name__)
@@ -26,7 +26,7 @@ class VisionGPS:
     """
     Vision-based GPS emulator.
 
-    Detects ArUco markers, estimates world position, and sends
+    Detects ArUco Diamond markers, estimates world position, and sends
     VISION_POSITION_ESTIMATE to the flight controller via MAVLink.
     """
 
@@ -38,7 +38,7 @@ class VisionGPS:
         self._shutdown_requested = False
 
         # Components (initialized in start())
-        self.detector: Optional[ArucoDetector] = None
+        self.detector: Optional[DiamondDetector] = None
         self.estimator: Optional[PositionEstimator] = None
         self.mavlink = None
 
@@ -71,9 +71,9 @@ class VisionGPS:
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
 
-        # Initialize ArUco detector
+        # Initialize Diamond detector
         camera_params_path = self.config_dir / "camera_params.yaml"
-        self.detector = ArucoDetector.from_config(
+        self.detector = DiamondDetector.from_config(
             self.config,
             str(camera_params_path)
         )
@@ -229,7 +229,7 @@ class VisionGPS:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="ArUco Vision GPS - sends position to flight controller"
+        description="Diamond Vision GPS - sends position to flight controller"
     )
     parser.add_argument(
         '--config',

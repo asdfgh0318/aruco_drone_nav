@@ -33,7 +33,7 @@ import numpy as np
 # Add parent directory for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.aruco_detector import ArucoDetector, MarkerDetection, ARUCO_DICTIONARIES
+from src.aruco_detector import ArucoDetector, DiamondDetector, MarkerDetection, DiamondDetection, ARUCO_DICTIONARIES
 from src.position_estimator import SimplePositionEstimator
 from src.camera_calibration import CameraCalibration
 
@@ -59,7 +59,7 @@ class TrajectoryPoint:
 @dataclass
 class MarkerRecord:
     """Recorded marker information."""
-    marker_id: int
+    marker_id: str  # String ID (e.g., "0" or "0_1_2_3" for diamonds)
     world_pos: Tuple[float, float, float]  # x, y, z in world frame
     first_seen: float
     last_seen: float
@@ -148,22 +148,33 @@ class DebugGUI:
     """Main debug GUI application."""
 
     def __init__(self, host: str = "10.156.64.251", port: int = 8000,
-                 marker_size: float = 0.20, dictionary: str = "DICT_6X6_250"):
+                 marker_size: float = 0.10, square_size: float = 0.20,
+                 dictionary: str = "DICT_4X4_50", use_diamond: bool = True):
         self.host = host
         self.port = port
         self.marker_size = marker_size
+        self.square_size = square_size
         self.dictionary = dictionary
+        self.use_diamond = use_diamond
 
         # Stream reader
         self.stream_url = f"http://{host}:{port}/stream"
         self.stream = MJPEGStreamReader(self.stream_url)
 
-        # ArUco detector (runs locally on received frames)
-        self.detector = ArucoDetector(
-            camera_id=-1,  # No local camera
-            dictionary=dictionary,
-            marker_size_m=marker_size
-        )
+        # Detector (runs locally on received frames)
+        if use_diamond:
+            self.detector = DiamondDetector(
+                camera_id=-1,  # No local camera
+                dictionary=dictionary,
+                square_size_m=square_size,
+                marker_size_m=marker_size
+            )
+        else:
+            self.detector = ArucoDetector(
+                camera_id=-1,  # No local camera
+                dictionary=dictionary,
+                marker_size_m=marker_size
+            )
 
         # Position estimator
         self.estimator = SimplePositionEstimator()
@@ -379,11 +390,17 @@ class DebugGUI:
         # Schedule next update
         self.root.after(33, self._update_loop)  # ~30 FPS
 
+    def _get_marker_id(self, det):
+        """Get marker ID as string from detection."""
+        if hasattr(det, 'id_string'):
+            return det.id_string
+        return str(det.marker_id)
+
     def _update_telemetry(self):
         """Update telemetry panel."""
         # Markers
         if self.current_detections:
-            ids = [d.marker_id for d in self.current_detections]
+            ids = [self._get_marker_id(d) for d in self.current_detections]
             dists = [f"{d.distance:.2f}m" for d in self.current_detections]
             self.markers_label.configure(text=f"IDs: {ids}\nDist: {dists}")
         else:
@@ -497,10 +514,11 @@ class DebugGUI:
 
         # Update discovered markers
         for det in detections:
-            if det.marker_id not in self.markers_discovered:
+            marker_id = self._get_marker_id(det)
+            if marker_id not in self.markers_discovered:
                 # First time seeing this marker
-                self.markers_discovered[det.marker_id] = MarkerRecord(
-                    marker_id=det.marker_id,
+                self.markers_discovered[marker_id] = MarkerRecord(
+                    marker_id=marker_id,
                     world_pos=(fwd, right, alt),  # Approximate world pos from current detection
                     first_seen=pt.timestamp,
                     last_seen=pt.timestamp,
@@ -508,7 +526,7 @@ class DebugGUI:
                 )
             else:
                 # Update existing marker
-                marker = self.markers_discovered[det.marker_id]
+                marker = self.markers_discovered[marker_id]
                 marker.last_seen = pt.timestamp
                 marker.detection_count += 1
 
@@ -644,11 +662,13 @@ class DebugGUI:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="ArUco Debug GUI")
+    parser = argparse.ArgumentParser(description="ArUco/Diamond Debug GUI")
     parser.add_argument('--host', '-H', default='10.156.64.251', help='RPi camera server host')
     parser.add_argument('--port', '-p', type=int, default=8000, help='RPi camera server port')
-    parser.add_argument('--marker-size', '-s', type=float, default=0.20, help='Marker size in meters')
-    parser.add_argument('--dictionary', '-d', default='DICT_6X6_250', choices=list(ARUCO_DICTIONARIES.keys()))
+    parser.add_argument('--marker-size', '-s', type=float, default=0.10, help='Marker size in meters')
+    parser.add_argument('--square-size', type=float, default=0.20, help='Diamond square size in meters')
+    parser.add_argument('--dictionary', '-d', default='DICT_4X4_50', choices=list(ARUCO_DICTIONARIES.keys()))
+    parser.add_argument('--no-diamond', action='store_true', help='Use single ArUco markers instead of diamonds')
     parser.add_argument('-v', '--verbose', action='store_true')
 
     args = parser.parse_args()
@@ -662,7 +682,9 @@ def main():
         host=args.host,
         port=args.port,
         marker_size=args.marker_size,
-        dictionary=args.dictionary
+        square_size=args.square_size,
+        dictionary=args.dictionary,
+        use_diamond=not args.no_diamond
     )
     gui.run()
 

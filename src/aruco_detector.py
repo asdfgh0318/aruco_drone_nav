@@ -8,7 +8,7 @@ relative to the camera using OpenCV's ArUco module.
 import cv2
 import numpy as np
 from dataclasses import dataclass
-from typing import List, Optional, Dict, Tuple
+from typing import List, Optional, Dict, Tuple, Union
 import logging
 import threading
 import time
@@ -48,6 +48,65 @@ class MarkerDetection:
     tvec: np.ndarray              # Translation vector (x, y, z in meters)
     distance: float               # Distance to marker in meters
     timestamp: float              # Detection timestamp
+
+    @property
+    def position(self) -> Tuple[float, float, float]:
+        """Get marker position (x, y, z) relative to camera."""
+        return (
+            float(self.tvec[0]),
+            float(self.tvec[1]),
+            float(self.tvec[2])
+        )
+
+    @property
+    def rotation_matrix(self) -> np.ndarray:
+        """Convert rotation vector to rotation matrix."""
+        rmat, _ = cv2.Rodrigues(self.rvec)
+        return rmat
+
+    def get_euler_angles(self) -> Tuple[float, float, float]:
+        """
+        Get Euler angles (roll, pitch, yaw) in degrees.
+
+        Returns:
+            Tuple of (roll, pitch, yaw) in degrees
+        """
+        rmat = self.rotation_matrix
+
+        # Extract Euler angles from rotation matrix
+        sy = np.sqrt(rmat[0, 0] ** 2 + rmat[1, 0] ** 2)
+
+        if sy > 1e-6:
+            roll = np.arctan2(rmat[2, 1], rmat[2, 2])
+            pitch = np.arctan2(-rmat[2, 0], sy)
+            yaw = np.arctan2(rmat[1, 0], rmat[0, 0])
+        else:
+            roll = np.arctan2(-rmat[1, 2], rmat[1, 1])
+            pitch = np.arctan2(-rmat[2, 0], sy)
+            yaw = 0
+
+        return (
+            np.degrees(roll),
+            np.degrees(pitch),
+            np.degrees(yaw)
+        )
+
+
+@dataclass
+class DiamondDetection:
+    """Represents a detected ArUco Diamond marker with pose information."""
+
+    diamond_id: Tuple[int, int, int, int]  # (id0, id1, id2, id3)
+    corners: np.ndarray           # 4 corner points in image
+    rvec: np.ndarray              # Rotation vector (Rodrigues)
+    tvec: np.ndarray              # Translation vector (x, y, z in meters)
+    distance: float               # Distance to marker in meters
+    timestamp: float              # Detection timestamp
+
+    @property
+    def id_string(self) -> str:
+        """Get diamond ID as string (e.g., '0_1_2_3')."""
+        return "_".join(str(i) for i in self.diamond_id)
 
     @property
     def position(self) -> Tuple[float, float, float]:
@@ -501,20 +560,23 @@ class CharucoDetector(ArucoDetector):
         # Build CharucoBoard objects
         self.charuco_boards = {}
         for board_id, cfg in boards.items():
+            # Calculate marker IDs
+            if 'marker_ids' in cfg:
+                ids = np.array(cfg['marker_ids'], dtype=np.int32)
+            else:
+                markers_per_board = (cfg['squares_x'] * cfg['squares_y']) // 2
+                offset = board_id * markers_per_board
+                ids = np.arange(offset, offset + markers_per_board, dtype=np.int32)
+
+            # Create board with IDs (5th parameter for OpenCV 4.x)
             board = cv2.aruco.CharucoBoard(
                 (cfg['squares_x'], cfg['squares_y']),
                 cfg['square_size_m'],
                 cfg['marker_size_m'],
-                self.aruco_dict
+                self.aruco_dict,
+                ids
             )
             board.setLegacyPattern(False)
-
-            if 'marker_ids' in cfg:
-                board.setIds(np.array(cfg['marker_ids'], dtype=np.int32))
-            else:
-                markers_per_board = (cfg['squares_x'] * cfg['squares_y']) // 2
-                offset = board_id * markers_per_board
-                board.setIds(np.arange(offset, offset + markers_per_board, dtype=np.int32))
 
             self.charuco_boards[board_id] = board
 
@@ -611,6 +673,257 @@ class CharucoDetector(ArucoDetector):
             camera_matrix=camera_matrix,
             dist_coeffs=dist_coeffs,
             dictionary=config.get('aruco', {}).get('dictionary', 'DICT_6X6_250'),
+            resolution=(
+                config.get('camera', {}).get('width', 640),
+                config.get('camera', {}).get('height', 480)
+            ),
+            fps=config.get('camera', {}).get('fps', 30)
+        )
+
+
+class DiamondDetector(ArucoDetector):
+    """
+    ArUco Diamond marker detector with pose estimation.
+
+    Detects ArUco Diamond markers (4 ArUco markers in a diamond pattern)
+    using detectCharucoDiamond. Provides better robustness than single
+    markers due to redundancy.
+
+    Diamond structure:
+            [id0]
+         [id3]  [id1]
+            [id2]
+    """
+
+    def __init__(
+        self,
+        camera_id: int = 0,
+        camera_matrix: Optional[np.ndarray] = None,
+        dist_coeffs: Optional[np.ndarray] = None,
+        dictionary: str = "DICT_4X4_50",
+        square_size_m: float = 0.20,
+        marker_size_m: float = 0.10,
+        resolution: Tuple[int, int] = (640, 480),
+        fps: int = 30
+    ):
+        """
+        Initialize the Diamond detector.
+
+        Args:
+            camera_id: Camera device ID
+            camera_matrix: 3x3 camera intrinsic matrix
+            dist_coeffs: Distortion coefficients
+            dictionary: ArUco dictionary name
+            square_size_m: Size of center square in meters
+            marker_size_m: Size of each ArUco marker in meters
+            resolution: Camera resolution (width, height)
+            fps: Target frames per second
+        """
+        # Initialize parent with marker_size for internal use
+        super().__init__(
+            camera_id=camera_id,
+            camera_matrix=camera_matrix,
+            dist_coeffs=dist_coeffs,
+            dictionary=dictionary,
+            marker_size_m=marker_size_m,
+            resolution=resolution,
+            fps=fps
+        )
+
+        self.square_size_m = square_size_m
+        self.diamond_marker_size_m = marker_size_m
+
+    def detect(
+        self,
+        frame: Optional[np.ndarray] = None
+    ) -> List[DiamondDetection]:
+        """
+        Detect ArUco Diamond markers in frame and estimate poses.
+
+        Args:
+            frame: Input frame (BGR). If None, captures from camera.
+
+        Returns:
+            List of detected diamond markers with pose information
+        """
+        if frame is None:
+            frame = self.get_frame()
+            if frame is None:
+                return []
+
+        timestamp = time.time()
+        detections: List[DiamondDetection] = []
+
+        # First detect individual ArUco markers
+        corners, ids, rejected = self.detector.detectMarkers(frame)
+
+        if ids is None or len(ids) < 4:
+            # Need at least 4 markers for a diamond
+            return detections
+
+        # Detect diamond markers
+        diamond_corners, diamond_ids = cv2.aruco.detectCharucoDiamond(
+            frame,
+            corners,
+            ids,
+            self.square_size_m / self.diamond_marker_size_m,
+            cameraMatrix=self.camera_matrix,
+            distCoeffs=self.dist_coeffs
+        )
+
+        if diamond_ids is None or len(diamond_ids) == 0:
+            return detections
+
+        # Estimate pose for each diamond
+        for i, diamond_id in enumerate(diamond_ids):
+            diamond_id_tuple = tuple(int(x) for x in diamond_id.flatten())
+            diamond_corner = diamond_corners[i]
+
+            # Diamond corners represent the 4 corners of the center square
+            # Use solvePnP with the square corners
+            half_size = self.square_size_m / 2
+            obj_points = np.array([
+                [-half_size, half_size, 0],   # Top-left
+                [half_size, half_size, 0],    # Top-right
+                [half_size, -half_size, 0],   # Bottom-right
+                [-half_size, -half_size, 0]   # Bottom-left
+            ], dtype=np.float32)
+
+            success, rvec, tvec = cv2.solvePnP(
+                obj_points,
+                diamond_corner.reshape(-1, 2),
+                self.camera_matrix,
+                self.dist_coeffs
+            )
+
+            if success:
+                tvec = tvec.flatten()
+                rvec = rvec.flatten()
+                distance = np.linalg.norm(tvec)
+
+                detection = DiamondDetection(
+                    diamond_id=diamond_id_tuple,
+                    corners=diamond_corner,
+                    rvec=rvec,
+                    tvec=tvec,
+                    distance=distance,
+                    timestamp=timestamp
+                )
+                detections.append(detection)
+
+        # Update statistics
+        self.frames_processed += 1
+        self._fps_frame_count += 1
+
+        current_time = time.time()
+        if current_time - self._last_fps_time >= 1.0:
+            self.detection_rate = self._fps_frame_count / (
+                current_time - self._last_fps_time
+            )
+            self._fps_frame_count = 0
+            self._last_fps_time = current_time
+
+        return detections
+
+    def draw_detections(
+        self,
+        frame: np.ndarray,
+        detections: List[DiamondDetection],
+        draw_axes: bool = True,
+        axis_length: float = 0.1
+    ) -> np.ndarray:
+        """
+        Draw detected diamond markers and their poses on frame.
+
+        Args:
+            frame: Input frame
+            detections: List of detections to draw
+            draw_axes: Whether to draw coordinate axes
+            axis_length: Length of axes in meters
+
+        Returns:
+            Frame with drawings
+        """
+        output = frame.copy()
+
+        for detection in detections:
+            # Draw diamond outline
+            corners = detection.corners.reshape(-1, 2).astype(int)
+            cv2.polylines(
+                output, [corners], True, (0, 255, 0), 2
+            )
+
+            # Draw diamond ID
+            center = corners.mean(axis=0).astype(int)
+            cv2.putText(
+                output,
+                f"D:{detection.id_string}",
+                (center[0] - 50, center[1] - 10),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6, (0, 255, 0), 2
+            )
+
+            # Draw distance
+            cv2.putText(
+                output,
+                f"{detection.distance:.2f}m",
+                (center[0] - 30, center[1] + 20),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5, (255, 255, 0), 2
+            )
+
+            # Draw coordinate axes
+            if draw_axes:
+                cv2.drawFrameAxes(
+                    output,
+                    self.camera_matrix,
+                    self.dist_coeffs,
+                    detection.rvec,
+                    detection.tvec,
+                    axis_length
+                )
+
+        # Draw FPS
+        cv2.putText(
+            output,
+            f"FPS: {self.detection_rate:.1f}",
+            (10, 30),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7, (0, 255, 255), 2
+        )
+
+        return output
+
+    @classmethod
+    def from_config(
+        cls,
+        config: Dict,
+        calibration_path: str
+    ) -> 'DiamondDetector':
+        """
+        Create detector from configuration dictionary.
+
+        Args:
+            config: Configuration dictionary
+            calibration_path: Path to camera calibration file
+
+        Returns:
+            Configured DiamondDetector instance
+        """
+        # Load camera calibration
+        camera_matrix, dist_coeffs = CameraCalibration.load_calibration(
+            calibration_path
+        )
+
+        diamond_config = config.get('diamond', {})
+
+        return cls(
+            camera_id=config.get('camera', {}).get('device_id', 0),
+            camera_matrix=camera_matrix,
+            dist_coeffs=dist_coeffs,
+            dictionary=config.get('aruco', {}).get('dictionary', 'DICT_4X4_50'),
+            square_size_m=diamond_config.get('square_size_m', 0.20),
+            marker_size_m=diamond_config.get('marker_size_m', 0.10),
             resolution=(
                 config.get('camera', {}).get('width', 640),
                 config.get('camera', {}).get('height', 480)

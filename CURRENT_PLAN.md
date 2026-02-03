@@ -4,13 +4,15 @@
 RPi + Camera = Visual GPS emulator. Detects markers, calculates position, sends to FC. FC handles everything else.
 
 ## 1. Vision System
-- [x] ArUco marker detection (DICT_6X6_250)
+- [x] ArUco marker detection (DICT_4X4_50)
+- [x] **ChArUco Diamond markers** (4 ArUco markers per diamond, better robustness)
 - [x] 6-DOF pose estimation (solvePnP)
-- [x] Camera calibration (chessboard)
+- [x] Camera calibration (ChArUco board)
 - [x] Remote calibration over network
 - [x] Wide-angle calibration (8-coefficient rational model)
 - [x] ChArUco board detection (sub-pixel pose accuracy)
-- [x] ChArUco board generator
+- [x] ChArUco board generator (DICT_4X4_50)
+- [x] Diamond marker generator (`tools/generate_diamonds.py`)
 - [ ] Adaptive detection parameters (lighting conditions)
 
 ## 2. Position Calculation

@@ -8,20 +8,20 @@ Handles coordinate frame transformations and multi-marker fusion.
 import numpy as np
 import yaml
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 import logging
 from pathlib import Path
 
-from .aruco_detector import MarkerDetection
+from .aruco_detector import MarkerDetection, DiamondDetection
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class MarkerConfig:
-    """Configuration for a ceiling-mounted ArUco marker."""
+    """Configuration for a ceiling-mounted ArUco marker or diamond."""
 
-    marker_id: int
+    marker_id: str                # String ID (e.g., "0" or "0_1_2_3" for diamonds)
     world_position: np.ndarray    # (x, y, z) in world frame
     orientation_deg: float        # Marker rotation in degrees
     description: str = ""
@@ -45,7 +45,7 @@ class DroneState:
     position: np.ndarray          # (x, y, z) in meters
     yaw: float                    # Yaw angle in degrees
     timestamp: float              # Estimation timestamp
-    marker_ids: List[int]         # Markers used for estimation
+    marker_ids: List[str]         # Markers used for estimation (string IDs)
     confidence: float             # Estimation confidence (0-1)
 
     @property
@@ -93,7 +93,7 @@ class PositionEstimator:
             marker_map_path: Path to marker map YAML file
             camera_offset: Camera offset from drone center (x, y, z) in body frame
         """
-        self.markers: Dict[int, MarkerConfig] = {}
+        self.markers: Dict[str, MarkerConfig] = {}
         self.camera_offset = np.array(camera_offset)
 
         # Camera to body frame rotation (camera facing up)
@@ -127,6 +127,8 @@ class PositionEstimator:
         """
         Load marker map from YAML file.
 
+        Supports both legacy format (markers:) and new format (diamonds:).
+
         Args:
             filepath: Path to marker map file
 
@@ -139,9 +141,20 @@ class PositionEstimator:
 
             self.markers.clear()
 
+            # Load diamond markers (new format)
+            for diamond_data in data.get('diamonds', []):
+                marker = MarkerConfig(
+                    marker_id=str(diamond_data['id']),  # e.g., "0_1_2_3"
+                    world_position=np.array(diamond_data['position']),
+                    orientation_deg=diamond_data.get('orientation', 0),
+                    description=diamond_data.get('description', '')
+                )
+                self.markers[marker.marker_id] = marker
+
+            # Also load legacy markers format for backward compatibility
             for marker_data in data.get('markers', []):
                 marker = MarkerConfig(
-                    marker_id=marker_data['id'],
+                    marker_id=str(marker_data['id']),  # Convert int to str
                     world_position=np.array(marker_data['position']),
                     orientation_deg=marker_data.get('orientation', 0),
                     description=marker_data.get('description', '')
@@ -157,7 +170,7 @@ class PositionEstimator:
 
     def add_marker(
         self,
-        marker_id: int,
+        marker_id: Union[int, str],
         world_position: Tuple[float, float, float],
         orientation_deg: float = 0,
         description: str = ""
@@ -166,36 +179,49 @@ class PositionEstimator:
         Add or update a marker in the map.
 
         Args:
-            marker_id: ArUco marker ID
+            marker_id: Marker ID (int for ArUco, str for diamonds like "0_1_2_3")
             world_position: Marker position in world frame (x, y, z)
             orientation_deg: Marker rotation about Z axis
             description: Optional description
         """
-        self.markers[marker_id] = MarkerConfig(
-            marker_id=marker_id,
+        marker_id_str = str(marker_id)
+        self.markers[marker_id_str] = MarkerConfig(
+            marker_id=marker_id_str,
             world_position=np.array(world_position),
             orientation_deg=orientation_deg,
             description=description
         )
 
+    def _get_marker_id_string(
+        self,
+        detection: Union[MarkerDetection, DiamondDetection]
+    ) -> str:
+        """Get marker ID as string from detection."""
+        if isinstance(detection, DiamondDetection):
+            return detection.id_string
+        else:
+            return str(detection.marker_id)
+
     def estimate_from_single_marker(
         self,
-        detection: MarkerDetection
+        detection: Union[MarkerDetection, DiamondDetection]
     ) -> Optional[DroneState]:
         """
         Estimate drone position from a single marker detection.
 
         Args:
-            detection: Detected marker with pose
+            detection: Detected marker with pose (MarkerDetection or DiamondDetection)
 
         Returns:
             Estimated drone state or None if marker unknown
         """
-        if detection.marker_id not in self.markers:
-            logger.warning(f"Unknown marker ID: {detection.marker_id}")
+        marker_id_str = self._get_marker_id_string(detection)
+
+        if marker_id_str not in self.markers:
+            logger.warning(f"Unknown marker ID: {marker_id_str}")
             return None
 
-        marker = self.markers[detection.marker_id]
+        marker = self.markers[marker_id_str]
 
         # Get marker position relative to camera
         # tvec is marker position in camera frame
@@ -241,13 +267,13 @@ class PositionEstimator:
             position=drone_position,
             yaw=drone_yaw,
             timestamp=detection.timestamp,
-            marker_ids=[detection.marker_id],
+            marker_ids=[marker_id_str],
             confidence=1.0
         )
 
     def estimate_from_multiple_markers(
         self,
-        detections: List[MarkerDetection]
+        detections: List[Union[MarkerDetection, DiamondDetection]]
     ) -> Optional[DroneState]:
         """
         Estimate drone position from multiple marker detections.
@@ -266,7 +292,7 @@ class PositionEstimator:
         # Filter to known markers
         valid_detections = [
             d for d in detections
-            if d.marker_id in self.markers
+            if self._get_marker_id_string(d) in self.markers
         ]
 
         if not valid_detections:
@@ -320,7 +346,7 @@ class PositionEstimator:
 
     def estimate(
         self,
-        detections: List[MarkerDetection],
+        detections: List[Union[MarkerDetection, DiamondDetection]],
         filter_enabled: bool = True
     ) -> Optional[DroneState]:
         """
@@ -465,14 +491,16 @@ def test_estimator():
 
     estimator = PositionEstimator()
 
-    # Add a test marker at origin, 3m high
-    estimator.add_marker(0, (0.0, 0.0, 3.0), 0, "Test marker")
+    # Add a test marker at origin, 3m high (supports both int and string IDs)
+    estimator.add_marker(0, (0.0, 0.0, 3.0), 0, "Test marker (legacy)")
+    estimator.add_marker("0_1_2_3", (2.0, 0.0, 3.0), 0, "Test diamond marker")
 
     # Simulate a detection
     # Marker at (0, 0, 3) world, drone at (0.5, 0.5, 1.0)
     # Marker should appear at offset in camera frame
 
     print("Position estimator test - add real detections for testing")
+    print(f"Markers loaded: {list(estimator.markers.keys())}")
 
 
 if __name__ == "__main__":
