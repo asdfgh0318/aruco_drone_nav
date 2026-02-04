@@ -129,7 +129,7 @@ def generate_marker_pdf(
     output_path: str,
     marker_size_cm: float = 20.0,
     dictionary: str = "DICT_6X6_250",
-    page_size=A4,
+    page_size=None,
     markers_per_page: int = 1
 ):
     """
@@ -146,6 +146,9 @@ def generate_marker_pdf(
     if not REPORTLAB_AVAILABLE:
         print("PDF generation requires reportlab: pip install reportlab")
         return
+
+    if page_size is None:
+        page_size = A4
 
     c = canvas.Canvas(output_path, pagesize=page_size)
     page_width, page_height = page_size

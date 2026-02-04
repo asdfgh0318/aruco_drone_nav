@@ -212,15 +212,23 @@ class ArucoDetector:
         )
         self.aruco_params = cv2.aruco.DetectorParameters()
 
-        # Optimize detection parameters for robustness
+        # Optimize detection parameters for ceiling markers at 2-4m distance
         self.aruco_params.adaptiveThreshConstant = 7
-        self.aruco_params.minMarkerPerimeterRate = 0.02  # Detect smaller markers
+        self.aruco_params.adaptiveThreshWinSizeMin = 3
+        self.aruco_params.adaptiveThreshWinSizeMax = 23
+        self.aruco_params.adaptiveThreshWinSizeStep = 10
+        self.aruco_params.minMarkerPerimeterRate = 0.01  # Detect smaller/distant markers
         self.aruco_params.maxMarkerPerimeterRate = 4.0
         self.aruco_params.polygonalApproxAccuracyRate = 0.05  # More forgiving shape
-        self.aruco_params.minCornerDistanceRate = 0.02  # Allow closer corners
-        self.aruco_params.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
-        self.aruco_params.cornerRefinementWinSize = 5
-        self.aruco_params.cornerRefinementMaxIterations = 50
+        self.aruco_params.minCornerDistanceRate = 0.01  # Allow closer corners
+        # Corner refinement: CONTOUR is faster than SUBPIX, slightly less accurate
+        self.aruco_params.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_CONTOUR
+        self.aruco_params.minOtsuStdDev = 5.0  # Lower threshold for low contrast
+        self.aruco_params.perspectiveRemovePixelPerCell = 4
+        self.aruco_params.perspectiveRemoveIgnoredMarginPerCell = 0.13
+
+        # CLAHE for preprocessing
+        self._clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
 
         # Create detector
         self.detector = cv2.aruco.ArucoDetector(
@@ -239,6 +247,17 @@ class ArucoDetector:
         self.detection_rate = 0.0
         self._last_fps_time = time.time()
         self._fps_frame_count = 0
+        self._last_rejected = None  # For debug display
+
+        # Timing stats (ms)
+        self._timing = {
+            'grab': 0.0,
+            'gray': 0.0,
+            'clahe': 0.0,
+            'bgr': 0.0,
+            'detect': 0.0,
+            'total': 0.0
+        }
 
     def start(self) -> bool:
         """
@@ -256,7 +275,8 @@ class ArucoDetector:
             logger.error(f"Failed to open camera {self.camera_id}")
             return False
 
-        # Configure camera
+        # Configure camera - use MJPG for higher FPS (YUYV is limited to 10fps at 720p)
+        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.resolution[0])
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.resolution[1])
         self.cap.set(cv2.CAP_PROP_FPS, self.target_fps)
@@ -326,16 +346,57 @@ class ArucoDetector:
         Returns:
             List of detected markers with pose information
         """
+        # Timing: before frame grab
+        t_before_grab = time.perf_counter()
+
         if frame is None:
             frame = self.get_frame()
             if frame is None:
                 return []
 
+        # Timing: after frame grab
+        t_after_grab = time.perf_counter()
+
         timestamp = time.time()
         detections: List[MarkerDetection] = []
 
-        # Detect markers
-        corners, ids, rejected = self.detector.detectMarkers(frame)
+        # Timing: before processing
+        t_before_proc = time.perf_counter()
+
+        # Preprocess: CLAHE improves detection in varying lighting
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        t_after_gray = time.perf_counter()
+
+        gray_clahe = self._clahe.apply(gray)
+        t_after_clahe = time.perf_counter()
+
+        frame_processed = cv2.cvtColor(gray_clahe, cv2.COLOR_GRAY2BGR)
+        t_after_bgr = time.perf_counter()
+
+        # Detect markers on preprocessed frame
+        try:
+            corners, ids, rejected = self.detector.detectMarkers(frame_processed)
+            self._last_rejected = rejected  # Store for debug
+        except cv2.error as e:
+            # CORNER_REFINE_CONTOUR can crash on certain frames (OpenCV bug)
+            logger.warning(f"Detection error (skipping frame): {e}")
+            corners, ids, rejected = [], None, []
+            self._last_rejected = rejected
+
+        # Timing: after processing (detection done)
+        t_after_proc = time.perf_counter()
+
+        # Store timing breakdown
+        self._timing['grab'] = (t_after_grab - t_before_grab) * 1000
+        self._timing['gray'] = (t_after_gray - t_before_proc) * 1000
+        self._timing['clahe'] = (t_after_clahe - t_after_gray) * 1000
+        self._timing['bgr'] = (t_after_bgr - t_after_clahe) * 1000
+        self._timing['detect'] = (t_after_proc - t_after_bgr) * 1000
+        self._timing['total'] = (t_after_proc - t_before_grab) * 1000
+
+        # Print timing to terminal
+        t = self._timing
+        print(f"[TIMING] grab:{t['grab']:.0f} gray:{t['gray']:.0f} CLAHE:{t['clahe']:.0f} bgr:{t['bgr']:.0f} detect:{t['detect']:.0f} total:{t['total']:.0f}ms")
 
         if ids is None or len(ids) == 0:
             return detections
@@ -482,6 +543,26 @@ class ArucoDetector:
             (10, 30),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.7, (0, 255, 255), 2
+        )
+
+        # Draw detection stats
+        n_rejected = len(self._last_rejected) if self._last_rejected is not None else 0
+        cv2.putText(
+            output,
+            f"Markers: {len(detections)} | Rejected: {n_rejected}",
+            (10, 60),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6, (0, 255, 0) if detections else (0, 0, 255), 2
+        )
+
+        # Draw timing breakdown
+        t = self._timing
+        cv2.putText(
+            output,
+            f"grab:{t['grab']:.0f} gray:{t['gray']:.0f} CLAHE:{t['clahe']:.0f} bgr:{t['bgr']:.0f} detect:{t['detect']:.0f} total:{t['total']:.0f}ms",
+            (10, 90),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5, (255, 255, 255), 1
         )
 
         return output
@@ -737,6 +818,7 @@ class DiamondDetector(ArucoDetector):
 
         self.square_size_m = square_size_m
         self.diamond_marker_size_m = marker_size_m
+        self._last_individual_markers = (None, None, None)  # For debug
 
     def detect(
         self,
@@ -759,16 +841,24 @@ class DiamondDetector(ArucoDetector):
         timestamp = time.time()
         detections: List[DiamondDetection] = []
 
-        # First detect individual ArUco markers
-        corners, ids, rejected = self.detector.detectMarkers(frame)
+        # Preprocess: histogram equalization improves detection in varying lighting
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        gray_eq = cv2.equalizeHist(gray)
+        frame_eq = cv2.cvtColor(gray_eq, cv2.COLOR_GRAY2BGR)
+
+        # First detect individual ArUco markers (on equalized frame)
+        corners, ids, rejected = self.detector.detectMarkers(frame_eq)
+
+        # Store individual marker info for debugging
+        self._last_individual_markers = (corners, ids, rejected)
 
         if ids is None or len(ids) < 4:
             # Need at least 4 markers for a diamond
             return detections
 
-        # Detect diamond markers
+        # Detect diamond markers (use equalized frame)
         diamond_corners, diamond_ids = cv2.aruco.detectCharucoDiamond(
-            frame,
+            frame_eq,
             corners,
             ids,
             self.square_size_m / self.diamond_marker_size_m,
@@ -850,6 +940,21 @@ class DiamondDetector(ArucoDetector):
             Frame with drawings
         """
         output = frame.copy()
+
+        # Draw individual ArUco markers (even if diamond not complete)
+        corners, ids, rejected = self._last_individual_markers
+        if ids is not None and len(ids) > 0:
+            cv2.aruco.drawDetectedMarkers(output, corners, ids, (0, 255, 0))
+            cv2.putText(output, f"ArUco: {len(ids)} markers", (10, 60),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        else:
+            cv2.putText(output, "ArUco: 0 markers", (10, 60),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+
+        # Draw rejected candidates (yellow)
+        if rejected is not None and len(rejected) > 0:
+            cv2.putText(output, f"Rejected: {len(rejected)}", (10, 90),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
 
         for detection in detections:
             # Draw diamond outline

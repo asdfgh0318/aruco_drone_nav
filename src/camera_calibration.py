@@ -254,13 +254,18 @@ class CameraCalibration:
             with open(filepath, 'r') as f:
                 data = yaml.safe_load(f)
 
-            camera_matrix = np.array(
-                data['camera_matrix']['data']
-            ).reshape(3, 3)
+            # Handle both old format (with 'data' key) and new format (direct list)
+            cm_data = data['camera_matrix']
+            if isinstance(cm_data, dict) and 'data' in cm_data:
+                camera_matrix = np.array(cm_data['data']).reshape(3, 3)
+            else:
+                camera_matrix = np.array(cm_data).reshape(3, 3)
 
-            dist_coeffs = np.array(
-                data['distortion_coefficients']['data']
-            )
+            dc_data = data['distortion_coefficients']
+            if isinstance(dc_data, dict) and 'data' in dc_data:
+                dist_coeffs = np.array(dc_data['data'])
+            else:
+                dist_coeffs = np.array(dc_data)
 
             # Check if this is just placeholder data
             if data.get('calibration_info', {}).get('date') == 'NOT_CALIBRATED':

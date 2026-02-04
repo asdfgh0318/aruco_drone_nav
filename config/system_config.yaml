@@ -1,5 +1,5 @@
 # ArUco Vision GPS - System Configuration
-# RPi detects diamond markers and sends position to FC via MAVLink.
+# RPi detects ArUco markers and sends position to FC via MAVLink.
 # FC handles all navigation, PID, missions, and failsafes.
 
 serial:
@@ -8,17 +8,14 @@ serial:
 
 camera:
   device_id: 0                   # USB camera device ID
-  width: 1920                    # 1080p - best balance of quality/streaming
-  height: 1080
-  fps: 30                        # 30fps at 1080p
+  width: 1280                    # 720p - faster processing, good for motion
+  height: 720
+  fps: 30                        # Target FPS
+  # exposure_time_us: 5000       # Uncomment for low exposure (reduces motion blur, needs good light)
 
 aruco:
-  dictionary: "DICT_4X4_50"      # ArUco dictionary type (4X4_50 for diamonds)
-
-diamond:
-  square_size_m: 0.096           # Size of chessboard squares in meters (2xA4 print ~9.6cm)
-  marker_size_m: 0.069           # Size of each ArUco marker in meters (2xA4 print ~6.9cm)
-  # Total diamond on 2xA4 ~29.7cm (max size)
+  dictionary: "DICT_4X4_50"      # ArUco dictionary (4X4 for better detection at distance)
+  marker_size_m: 0.18            # Physical marker size in meters (18cm for A4 with margins)
 
 control:
   loop_rate_hz: 20               # Vision position update rate (Hz)

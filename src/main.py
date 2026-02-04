@@ -16,11 +16,12 @@ import argparse
 import json
 import threading
 import numpy as np
+import cv2
 from pathlib import Path
 from typing import Optional
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-from .aruco_detector import DiamondDetector
+from .aruco_detector import ArucoDetector
 from .position_estimator import PositionEstimator, DroneState
 
 logger = logging.getLogger(__name__)
@@ -30,12 +31,15 @@ class PositionServer:
     """
     Simple HTTP server for streaming position data to remote viewers.
 
-    Runs in a background thread and serves JSON position data at /position.
+    Runs in a background thread and serves:
+    - /position - JSON position data
+    - /debug-frame - JPEG with detection boxes drawn
     """
 
     def __init__(self, port: int = 8001):
         self.port = port
         self.latest_state: Optional[DroneState] = None
+        self.latest_debug_frame: Optional[np.ndarray] = None
         self.lock = threading.Lock()
         self._server: Optional[HTTPServer] = None
         self._thread: Optional[threading.Thread] = None
@@ -45,13 +49,30 @@ class PositionServer:
         self.detection_count = 0
         self._start_time = time.time()
 
-    def update(self, state: Optional[DroneState], frame_count: int, detection_count: int):
-        """Update the latest position state (called from main loop)."""
+        # Timing data
+        self.timing = {}
+
+    def update(self, state: Optional[DroneState], frame_count: int, detection_count: int,
+                debug_frame: Optional[np.ndarray] = None, timing: Optional[dict] = None):
+        """Update the latest position state and debug frame (called from main loop)."""
         with self.lock:
             if state is not None:
                 self.latest_state = state
             self.frame_count = frame_count
             self.detection_count = detection_count
+            if debug_frame is not None:
+                self.latest_debug_frame = debug_frame
+            if timing is not None:
+                self.timing = timing
+
+    def get_debug_frame_jpeg(self) -> Optional[bytes]:
+        """Get latest debug frame as JPEG bytes."""
+        with self.lock:
+            if self.latest_debug_frame is None:
+                return None
+            _, jpeg = cv2.imencode('.jpg', self.latest_debug_frame,
+                                   [cv2.IMWRITE_JPEG_QUALITY, 80])
+            return jpeg.tobytes()
 
     def get_json(self) -> str:
         """Get current state as JSON string."""
@@ -68,7 +89,8 @@ class PositionServer:
                     "frame_count": self.frame_count,
                     "detection_count": self.detection_count,
                     "detection_rate": self.detection_count / max(1, self.frame_count),
-                    "uptime": time.time() - self._start_time
+                    "uptime": time.time() - self._start_time,
+                    "timing": self.timing
                 })
 
             state = self.latest_state
@@ -83,7 +105,8 @@ class PositionServer:
                 "frame_count": self.frame_count,
                 "detection_count": self.detection_count,
                 "detection_rate": round(self.detection_count / max(1, self.frame_count), 2),
-                "uptime": round(time.time() - self._start_time, 1)
+                "uptime": round(time.time() - self._start_time, 1),
+                "timing": self.timing
             })
 
     def start(self):
@@ -102,6 +125,17 @@ class PositionServer:
                     self.send_header('Access-Control-Allow-Origin', '*')
                     self.end_headers()
                     self.wfile.write(server_ref.get_json().encode())
+                elif self.path == '/debug-frame':
+                    jpeg_data = server_ref.get_debug_frame_jpeg()
+                    if jpeg_data is not None:
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'image/jpeg')
+                        self.send_header('Access-Control-Allow-Origin', '*')
+                        self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+                        self.end_headers()
+                        self.wfile.write(jpeg_data)
+                    else:
+                        self.send_error(503, 'No frame available yet')
                 else:
                     self.send_error(404)
 
@@ -117,24 +151,31 @@ class PositionServer:
             logger.info("Position server stopped")
 
 
-def init_camera_auto(device: str = "/dev/video0") -> bool:
+def init_camera_settings(device: str = "/dev/video0", exposure_us: Optional[int] = None) -> bool:
     """
-    Initialize camera with all auto settings via v4l2-ctl.
-
-    Sets auto exposure, auto focus, and auto white balance for optimal
-    detection of ceiling markers in varying lighting conditions.
+    Initialize camera settings via v4l2-ctl.
 
     Args:
         device: Video device path (default: /dev/video0)
+        exposure_us: Manual exposure time in microseconds. If None, uses auto exposure.
+                     Lower values (e.g., 5000) reduce motion blur but need good lighting.
 
     Returns:
         True if settings were applied successfully
     """
     settings = [
-        ("auto_exposure", 3),               # Aperture Priority (auto)
         ("focus_automatic_continuous", 1),  # Auto focus enabled
         ("white_balance_automatic", 1),     # Auto white balance
     ]
+
+    # Exposure settings
+    if exposure_us is not None:
+        # Manual exposure mode (1) with specific exposure time
+        settings.insert(0, ("auto_exposure", 1))  # Manual mode
+        settings.append(("exposure_time_absolute", exposure_us))
+        logger.info(f"Setting manual exposure: {exposure_us}us ({exposure_us/1000:.1f}ms)")
+    else:
+        settings.insert(0, ("auto_exposure", 3))  # Aperture Priority (auto)
 
     success = True
     for ctrl, val in settings:
@@ -151,14 +192,15 @@ def init_camera_auto(device: str = "/dev/video0") -> bool:
                 logger.warning(f"Failed to set {ctrl}: {result.stderr.strip()}")
                 success = False
         except FileNotFoundError:
-            logger.warning("v4l2-ctl not found, skipping camera auto settings")
+            logger.warning("v4l2-ctl not found, skipping camera settings")
             return False
         except subprocess.TimeoutExpired:
             logger.warning(f"Timeout setting {ctrl}")
             success = False
 
     if success:
-        logger.info("Camera auto settings applied (exposure, focus, white balance)")
+        mode = f"manual {exposure_us}us" if exposure_us else "auto"
+        logger.info(f"Camera settings applied (exposure: {mode}, auto focus, auto WB)")
     return success
 
 
@@ -166,7 +208,7 @@ class VisionGPS:
     """
     Vision-based GPS emulator.
 
-    Detects ArUco Diamond markers, estimates world position, and sends
+    Detects ArUco markers, estimates world position, and sends
     VISION_POSITION_ESTIMATE to the flight controller via MAVLink.
     """
 
@@ -178,7 +220,7 @@ class VisionGPS:
         self._shutdown_requested = False
 
         # Components (initialized in start())
-        self.detector: Optional[DiamondDetector] = None
+        self.detector: Optional[ArucoDetector] = None
         self.estimator: Optional[PositionEstimator] = None
         self.mavlink = None
         self.position_server: Optional[PositionServer] = None
@@ -212,13 +254,14 @@ class VisionGPS:
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
 
-        # Initialize camera auto settings (exposure, focus, white balance)
+        # Initialize camera settings (exposure, focus, white balance)
         camera_device = f"/dev/video{self.config.get('camera', {}).get('device_id', 0)}"
-        init_camera_auto(camera_device)
+        exposure_us = self.config.get('camera', {}).get('exposure_time_us')
+        init_camera_settings(camera_device, exposure_us=exposure_us)
 
-        # Initialize Diamond detector
+        # Initialize ArUco detector (single markers)
         camera_params_path = self.config_dir / "camera_params.yaml"
-        self.detector = DiamondDetector.from_config(
+        self.detector = ArucoDetector.from_config(
             self.config,
             str(camera_params_path)
         )
@@ -406,8 +449,26 @@ class VisionGPS:
                 self.detections_count += 1
                 state = self.estimator.estimate(detections)
 
-            # Update position server with latest state
-            self.position_server.update(state, self.frames_processed, self.detections_count)
+            # Draw debug frame with detection overlay
+            debug_frame = self.detector.draw_detections(frame, detections)
+            # Add position info to debug frame
+            if state:
+                cv2.putText(
+                    debug_frame,
+                    f"Pos: ({state.x:.2f}, {state.y:.2f}, {state.z:.2f})m  Yaw: {state.yaw:.1f}°",
+                    (10, debug_frame.shape[0] - 40),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2
+                )
+            detection_rate = self.detections_count / max(1, self.frames_processed)
+            cv2.putText(
+                debug_frame,
+                f"Detection: {detection_rate:.0%} ({self.detections_count}/{self.frames_processed})",
+                (10, debug_frame.shape[0] - 10),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2
+            )
+
+            # Update position server with latest state, debug frame, and timing
+            self.position_server.update(state, self.frames_processed, self.detections_count, debug_frame, self.detector._timing)
 
             # Log periodically
             if self.frames_processed % 100 == 0:
@@ -431,7 +492,7 @@ class VisionGPS:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Diamond Vision GPS - sends position to flight controller"
+        description="ArUco Vision GPS - sends position to flight controller"
     )
     parser.add_argument(
         '--config',
