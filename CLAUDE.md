@@ -1,169 +1,121 @@
-# Claude Code Resume Instructions
+# Claude Code Instructions
 
-This document provides context for AI assistants continuing work on this project.
+## IMPORTANT RULES
+
+### Documentation with Every Commit
+**ALWAYS update documentation when making code changes.** Never commit code without updating:
+- `README.md` - If user-facing features change
+- `CURRENT_PLAN.md` - Status, metrics, what's done/pending
+- `TODO.md` - Completed items, new tasks
+- `docs/TECHNICAL.md` - If implementation details change
+
+This is mandatory. Code changes without doc updates are incomplete.
+
+---
 
 ## Project Overview
 
-**ArUco Vision GPS** - Vision-based GPS emulator for indoor drones using ceiling-mounted ChArUco Diamond markers on Raspberry Pi Zero 2W. The RPi detects diamond markers (4 ArUco markers per diamond), calculates world-frame position, and sends VISION_POSITION_ESTIMATE to the flight controller via MAVLink. The FC handles all navigation, PID, missions, and failsafes.
+**ArUco Vision GPS** - Vision-based indoor positioning for drones using ceiling-mounted ArUco markers on Raspberry Pi Zero 2W.
 
-**Project Location**: `/home/adam/ŻYCIE/PRACA/aruco_drone_nav`
+**Current Status (2026-02-04):**
+- Single ArUco markers (DICT_4X4_50, 18cm)
+- CLAHE preprocessing for robust detection
+- 95-100% detection rate at ~3.7 FPS
+- HTTP streaming with timing data
 
 ## Architecture
 
 ```
-RPi Zero 2W (companion)              Flight Controller
-+---------------------------+        +------------------+
-| USB Camera (facing up)    |        |                  |
-|     |                     |        | ArduCopter EKF   |
-|     v                     |        | - Position est.  |
-| ArUco Detection           |  UART  | - PID control    |
-|     |                     | -----> | - Navigation     |
-|     v                     | MAVLink| - Missions       |
-| Position Estimation       |        | - Failsafes      |
-|     |                     |        |                  |
-|     v                     |        |                  |
-| VISION_POSITION_ESTIMATE  |        |                  |
-+---------------------------+        +------------------+
+Ceiling Markers ──► USB Camera ──► RPi Zero 2W ──► Flight Controller
+                    (MJPG 720p)    - CLAHE preprocessing
+                                   - ArUco detection (~250ms)
+                                   - Position estimation
+                                   - VISION_POSITION_ESTIMATE
 ```
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `src/main.py` | Vision GPS main loop (detect → estimate → send) |
-| `src/aruco_detector.py` | Diamond/ArUco detection with OpenCV |
-| `src/position_estimator.py` | World-frame position from markers |
-| `src/mavlink_interface.py` | MAVLink communication (VISION_POSITION_ESTIMATE) |
-| `src/camera_calibration.py` | Camera intrinsic calibration |
-| `tools/debug_gui.py` | Debug GUI (runs on local machine) |
-| `tools/camera_server.py` | MJPEG streaming (runs on RPi) |
-| `tools/calibrate_remote.py` | Network calibration tool |
-| `tools/position_viewer.py` | Position visualization (runs on laptop) |
-| `config/system_config.yaml` | System configuration |
-| `config/camera_params.yaml` | Camera calibration data |
+| `src/main.py` | Vision GPS main loop (stream/test/run modes) |
+| `src/aruco_detector.py` | Detection + CLAHE + timing instrumentation |
+| `src/position_estimator.py` | World-frame position calculation |
+| `src/mavlink_interface.py` | MAVLink (VISION_POSITION_ESTIMATE) |
+| `tools/debug_viewer.py` | Manual frame capture with timing |
+| `config/system_config.yaml` | Camera, ArUco, control settings |
 | `config/marker_map.yaml` | Marker world positions |
-| `CURRENT_PLAN.md` | Living project roadmap |
 
 ## Quick Commands
 
-### Run Vision GPS (on RPi)
+### Sync and Run on RPi
 ```bash
-# Test mode (prints position, no MAVLink)
-python3 -m src.main --mode test --config config/system_config.yaml
+./sync_to_rpi.sh                    # Sync code
+ssh aruconav@aruconav.local         # Connect
 
-# Run mode (sends to FC)
-python3 -m src.main --mode run --config config/system_config.yaml
-
-# Stream mode (HTTP server for remote visualization)
-python3 -m src.main --mode stream --port 8001
+# On RPi:
+cd /home/aruconav/aruco_drone_nav
+python3 -m src.main --mode stream   # HTTP server (port 8001)
+python3 -m src.main --mode test     # Console output
 ```
 
-### Connect to RPi
+### Debug Viewer (local machine)
 ```bash
-./rpi_cmd.sh              # Interactive shell
-./rpi_cmd.sh "command"    # Run command
-./sync_to_rpi.sh          # Sync code to RPi
+python3 tools/debug_viewer.py       # Press SPACE to capture
 ```
 
-### Debug GUI (on local machine)
+### Check RPi Stream Status
 ```bash
-python3 tools/debug_gui.py --host aruconav.local --port 8000
+ssh aruconav@aruconav.local "pgrep -f 'src.main' && tail -5 /tmp/stream.log"
 ```
 
-### Position Viewer (on local machine)
-```bash
-# Visualize position streamed from RPi
-python3 tools/position_viewer.py --host aruconav.local --port 8001
-```
+## Hardware
 
-## Hardware Setup
-- **RPi Hostname**: `aruconav.local` (IP: `10.59.24.251`)
-- **RPi User**: `aruconav` / password: `dupa1234`
-- **Camera**: USB camera at `/dev/video0`, 640x480 @ 15 FPS
-- **Markers**: ChArUco Diamond (DICT_4X4_50), ~64cm total size
-- **Serial**: `/dev/serial0` at 921600 baud
+- **RPi**: `aruconav.local` (user: `aruconav`)
+- **Camera**: USB, MJPG 1280x720 @ 30fps
+- **Markers**: 18cm ArUco (DICT_4X4_50) on A4 paper
+- **Ceiling Height**: ~1.7m (working distance)
 
-## FC Configuration (ArduCopter)
+## Current Performance
+
+| Metric | Value |
+|--------|-------|
+| Resolution | 1280x720 |
+| Detection | 95-100% |
+| Processing | ~270ms/frame |
+| FPS | ~3.7 |
+
+### Timing Breakdown
 ```
-VISO_TYPE = 1          # MAVLink vision
-EK3_SRC1_POSXY = 6     # ExternalNav
-EK3_SRC1_POSZ = 6      # ExternalNav
-EK3_SRC1_YAW = 6       # ExternalNav
-GPS_TYPE = 0            # Disable GPS (indoor)
+grab:0ms  gray:3ms  CLAHE:20ms  bgr:2ms  detect:250ms
 ```
 
 ## Session History
 
-### Session 1 (2025-01-22)
-- Initial RPi deployment, camera and detection testing
+### 2026-02-04: Single ArUco + CLAHE + Timing
+- Switched from Diamond to single ArUco markers
+- Added CLAHE preprocessing (robust detection)
+- Added timing instrumentation
+- Created debug_viewer.py with timing display
+- Handled OpenCV CORNER_REFINE_CONTOUR crash
+- Updated all documentation
 
-### Session 2 (2026-01-23)
-- Debug GUI, camera server, remote calibration, camera calibrated
+### 2026-02-03: Diamond Markers + Remote Calibration
+- Implemented ChArUco Diamond detection
+- Remote camera calibration
+- Diamond marker generator
 
-### Session 3 (2026-02-02)
-- Architecture change: RPi is now GPS emulator, FC handles navigation
-- Removed PID, mission executor, dead reckoning, failsafes from RPi code
-- Added VISION_POSITION_ESTIMATE to MAVLink interface
-- Simplified main.py to detect → estimate → send loop
-- Old modules archived in src/deprecated/
-- Created CURRENT_PLAN.md as living roadmap
+### 2026-01-23: RPi Deployment
+- Initial RPi Zero 2W setup
+- MJPEG streaming
+- Debug GUI
 
-### Session 4 (2026-02-03)
-- Built ArduCopter SITL from source (~ardupilot)
-- Created SITL validation tool (`tools/test_sitl.py`)
-- Created SITL param file (`config/sitl_params.parm`) and config (`config/sitl_config.yaml`)
-- Validated full vision→FC pipeline: params, EKF origin, streaming, convergence
-- Successfully armed, took off, hovered at 2m, and landed in SITL
-- Circle pattern test passed (0.189m error at 1.5m radius)
-- Created technical summary for Pawel (`docs/PAWEL_SUMMARY.md`)
-- Documented SITL results (`docs/SITL_RESULTS.md`)
+## Next Priority
 
-### Session 5 (2026-02-03)
-- **Replaced ArUco with ChArUco Diamond markers** for better robustness
-- Added `DiamondDetector` class and `DiamondDetection` dataclass
-- Updated `PositionEstimator` to use string marker IDs (`"0_1_2_3"`)
-- Created `tools/generate_diamonds.py` using OpenCV's `drawCharucoDiamond()`
-- Updated all tools for diamond support (`--diamond` flag)
-- Changed dictionary from DICT_6X6_250 to DICT_4X4_50
-- Generated diamond markers and ChArUco calibration board in `markers/`
-- Fixed `generate_charuco.py` for OpenCV 4.x API compatibility
+1. **FPS Optimization** - Target 10+ FPS
+   - Reduce resolution (640x480)
+   - Conditional CLAHE
+   - Detection parameter tuning
 
-### Session 6 (2026-02-03)
-- **Added HTTP position streaming** for flight simulation testing
-- Added `PositionServer` class to `src/main.py` with `/position` JSON endpoint
-- Added `--mode stream` to run detection on RPi and serve positions via HTTP
-- Created `tools/position_viewer.py` - top-down visualization with:
-  - Marker positions from `marker_map.yaml`
-  - Drone position with yaw arrow
-  - Position history trail
-  - Live stats (detection rate, confidence, uptime)
-  - Zoom controls (+/-), trail clear (c)
-- Added `vision_server.port` to `config/system_config.yaml`
-- Fixed bug: position server was overwriting valid position with None on empty frames
-- **Tuned ArUco detector parameters** - improved detection rate from 10% to 58%:
-  - Added corner refinement (CORNER_REFINE_SUBPIX)
-  - Adjusted minMarkerPerimeterRate, polygonalApproxAccuracyRate
-- Identified issue: Diamond markers require all 4 ArUco markers visible (strict)
-
-## TODO - Next Session
-
-### Debug Tool: Frame + Detection Viewer
-Create a tool that shows **both** the camera frame AND detection results to separate:
-- Camera issues (focus, exposure, framing)
-- ArUco detection issues (parameters, marker quality)
-- WiFi/streaming issues
-
-**Approach**: RPi sends occasional JPEG frames + detection overlay via HTTP, laptop displays them.
-
-```
-GET /debug-frame  →  JPEG with detection boxes drawn
-GET /position     →  JSON position (existing)
-```
-
-This allows visual verification of what RPi camera sees vs what it detects.
-
-### Fallback: Single ArUco Markers
-If diamond detection remains unreliable, switch to single ArUco markers:
-- Higher detection rate (only need 1 marker visible, not 4)
-- Simpler setup
-- Less robust to partial occlusion but more forgiving overall
+2. **Real Hardware Testing**
+   - Connect to flight controller
+   - Tethered hover test

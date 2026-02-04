@@ -82,7 +82,7 @@ grab:0ms  gray:3ms  CLAHE:20ms  bgr:2ms  detect:250ms  total:275ms
 
 ### Workflow Preferences
 1. **Testing**: Always test on RPi via `./sync_to_rpi.sh`
-2. **Documentation**: Keep docs updated
+2. **Documentation**: **UPDATE DOCS WITH EVERY COMMIT** - Always update relevant docs (README, CURRENT_PLAN, TODO, TECHNICAL) when making code changes. Never commit code without updating documentation to match.
 3. **Git**: Commit frequently with descriptive messages
 4. **Session End**: Log progress to vibecoding logger
 
