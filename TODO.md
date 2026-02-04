@@ -2,136 +2,125 @@
 
 ## Priority: High
 
+### FPS Optimization (Current: 3.7 FPS, Target: 10+ FPS)
+- [ ] **Reduce resolution to 640x480** - Quarter the pixel count
+  - Update `config/system_config.yaml`
+  - Test detection at ceiling distance (~1.7m)
+  - Expected: 60-75% FPS improvement
+
+- [ ] **Conditional CLAHE** - Skip when detection succeeds
+  - Try detection on raw grayscale first
+  - Only apply CLAHE on failed detection
+  - Expected: 50-70% FPS gain when lighting is good
+
+- [ ] **Detection parameter tuning**
+  - Tighten `adaptiveThreshWinSizeMax` (23 -> 15)
+  - Increase `minMarkerPerimeterRate` (0.01 -> 0.05)
+  - Enable `aprilTagQuadDecimate = 2.0`
+
 ### Hardware Integration
-- [ ] **Add wiring diagrams** - Create detailed wiring diagrams once final parts are selected
-  - RPi Zero to FC serial connection
-  - Camera connection
-  - Power distribution
-  - LiDAR integration points
+- [ ] **Real FC testing** - Connect to actual flight controller
+  - Verify VISION_POSITION_ESTIMATE reception
+  - Check EKF convergence
+  - Test position accuracy
 
-- [ ] **Adjust code to final parts** - Modify configuration and code for actual hardware
-  - Update serial port configuration for specific FC
-  - Calibrate camera intrinsics for actual USB camera model
-  - Test and tune PID gains for actual drone dynamics
-  - Verify marker detection range with actual setup
-
-### Marker Spacing Calculator
-- [ ] **Create marker spacing calculator script** - Tool to calculate optimal marker placement
-  - Input: camera FOV (horizontal/vertical), flight altitude, marker size
-  - Output: recommended marker spacing for continuous coverage
-  - Consider overlap requirements (seeing 2+ markers at once)
-  - Generate ceiling layout diagram
-  - Formula: `spacing = 2 * altitude * tan(FOV/2) - marker_size`
+- [ ] **Tethered hover test** - First real flight
+  - Safety tether attached
+  - Single marker hover
+  - Verify position hold
 
 ## Priority: Medium
 
-### RPi Deployment
-- [ ] **Create SD card image for RPi** - Preconfigured Raspberry Pi OS image
-  - Install all dependencies
-  - Configure auto-start on boot
-  - Set up serial port permissions
-  - Include calibration and test tools
-  - Document flashing process
+### Performance Monitoring
+- [ ] **Add FPS counter to HTTP endpoint**
+  - Include in JSON response
+  - Track rolling average
 
-### LiDAR Integration
-- [ ] **Add LiDAR support to the drone** - Integrate downward-facing LiDAR for altitude
-  - Research compatible LiDAR sensors (TF-Luna, VL53L1X, etc.)
-  - Add LiDAR driver module
-  - Fuse LiDAR altitude with ArUco Z estimate
-  - Improve landing detection with ground distance
-  - Consider obstacle avoidance capabilities
+- [ ] **ROI-based detection** - Search near last marker position
+  - Track last detection location
+  - Search expanded ROI first
+  - Fall back to full frame
 
-### Testing & Validation
-- [ ] **SITL testing** - Test with ArduCopter simulator before real flight
-  - Create SITL configuration file
-  - Test mission execution in simulation
-  - Validate MAVLink command sequences
-
-- [ ] **Real flight testing** - Systematic testing with actual hardware
-  - Tethered single-marker hover test
-  - Free hover test
-  - Multi-marker transition test
-  - Full mission execution test
-  - Edge case testing (marker loss, lighting variations)
-
-### Performance Optimization
-- [ ] **Optimize for RPi Zero** - Performance improvements for constrained hardware
-  - Profile CPU usage
-  - Consider reduced resolution modes
-  - Optimize detection parameters
-  - Test headless OpenCV performance
+### Documentation
+- [ ] **Wiring diagrams** - Create once final hardware selected
+  - RPi Zero to FC serial connection
+  - Camera connection
+  - Power distribution
 
 ## Priority: Low
 
 ### Features
-- [ ] **Dynamic marker discovery** - Auto-detect and register new markers
-- [ ] **Multi-drone support** - Coordinate multiple drones in same space
-- [ ] **Real-time visualization** - Web interface for monitoring flight
-- [ ] **Automatic calibration** - On-startup camera calibration check
-- [ ] **Flight replay tool** - Visualize recorded flights
+- [ ] **Multi-marker support** - Deploy multiple ceiling markers
+- [ ] **Dynamic marker discovery** - Auto-register new markers
+- [ ] **Web interface** - Real-time monitoring dashboard
 
-### Documentation
-- [ ] **User manual** - Step-by-step setup guide for new users
-- [ ] **Video tutorials** - Recording setup and usage demonstrations
-- [ ] **API documentation** - Docstrings and Sphinx docs
-
-### VR Integration
-- [ ] **Define VR JSON schema** - Coordinate with VR team on exact format
-- [ ] **Bidirectional sync** - Real-time position streaming to VR
-- [ ] **Mission validation** - Check waypoints are reachable before execution
+### Future Optimization
+- [ ] **Frame skipping** - Process every 2nd/3rd frame
+- [ ] **IMU integration** - Predict position between detections
 
 ## Completed
 
-### Phase 1 - Single Marker Navigation ✓
+### Session 2026-02-04: Single ArUco + CLAHE + Timing
+- [x] Switch from Diamond markers to single ArUco (DICT_4X4_50)
+- [x] Add CLAHE preprocessing (robust 95-100% detection)
+- [x] Configure MJPG format for 30fps capture
+- [x] Add timing instrumentation (grab/gray/CLAHE/bgr/detect)
+- [x] Create debug_viewer.py with timing display
+- [x] Add timing to HTTP JSON endpoint
+- [x] Handle OpenCV CORNER_REFINE_CONTOUR crash gracefully
+- [x] Update camera calibration (720p, 0.14 reprojection error)
+- [x] Configure 18cm markers for A4 printing
+
+### Session 2026-02-03: Diamond Markers + Remote Calibration
+- [x] Implement ChArUco Diamond detection
+- [x] Remote camera calibration over network
+- [x] Wide-angle calibration support
+- [x] Diamond marker generator
+
+### Session 2026-01-23: RPi Deployment & Debug Tools
+- [x] Deploy system to RPi Zero 2W
+- [x] Test USB camera (640x480 @ 15 FPS)
+- [x] Create MJPEG camera streaming server
+- [x] Create Debug GUI with video/telemetry
+- [x] Remote calibration tool
+- [x] HTML documentation site
+
+### Phase 1 & 2 - Core System
 - [x] Camera calibration module
 - [x] ArUco detection with pose estimation
 - [x] Position estimator (marker-relative)
 - [x] MAVLink interface
-- [x] Basic hover control loop
-- [x] Ground test mode
-
-### Phase 2 - Multi-Marker Mission ✓
-- [x] Marker map configuration
-- [x] World position estimation
 - [x] Mission executor (JSON parsing)
-- [x] Waypoint navigation
-- [x] Position predictor (dead reckoning)
 - [x] Flight recorder
 
-### Tools & Documentation ✓
-- [x] Camera calibration tool
-- [x] ArUco detection test tool
-- [x] MAVLink connection test tool
-- [x] Marker generator (PDF output)
-- [x] README documentation
-- [x] Technical documentation
+---
 
-### Session 2026-01-23: RPi Deployment & Debug Tools ✓
-- [x] Deploy system to RPi Zero 2W (10.156.64.251)
-- [x] Test USB camera (640x480 @ 15 FPS)
-- [x] Verify ArUco detection on RPi (DICT_6X6_250, ID 1)
-- [x] Position estimation working (~0.53m distance)
-- [x] Create MJPEG camera streaming server (`tools/camera_server.py`)
-- [x] Create Debug GUI with video/telemetry/marker map (`tools/debug_gui.py`)
-- [x] Create remote calibration tool (`tools/calibrate_remote.py`)
-- [x] Camera calibration completed (fx=417, fy=417, reprojection error=3.41)
-- [x] HTML documentation site
+## Performance Reference
+
+### Current (2026-02-04)
+| Metric | Value |
+|--------|-------|
+| Resolution | 1280x720 |
+| Detection Rate | 95-100% |
+| Total Time | ~270ms |
+| FPS | ~3.7 |
+
+### Timing Breakdown
+| Step | Time |
+|------|------|
+| Frame grab | 0ms (buffered) |
+| BGR->Gray | 3ms |
+| CLAHE | 20ms |
+| Gray->BGR | 2ms |
+| **ArUco detect** | **250ms** |
+
+### Target After Optimization
+| Metric | Target |
+|--------|--------|
+| Resolution | 640x480 |
+| FPS | 10+ |
+| Detection Rate | >90% |
 
 ---
 
-## Notes
-
-### Marker Spacing Quick Reference
-For 60° FOV camera at 1.5m flight altitude:
-- Visible area: ~1.7m diameter
-- Recommended spacing: ~1.2m (30% overlap)
-- Markers needed for 3m x 3m area: ~9 markers (3x3 grid)
-
-### Hardware Candidates
-- **LiDAR**: TF-Luna (8m range, $25), TFmini Plus, Garmin LIDAR-Lite
-- **Camera**: Logitech C270 (common, well-supported), RPi Camera Module
-- **FC**: Pixhawk 4, Kakute H7, Matek H743
-
----
-
-*Last updated: 2026-01-23*
+*Last updated: 2026-02-04*

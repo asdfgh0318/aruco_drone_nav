@@ -4,120 +4,141 @@
 
 ## Project Identity
 
-- **Name**: ArUco Drone Navigation System
-- **Location**: `/home/adam-koszalka/ŻYCIE/PRACA/aruco_drone_nav`
+- **Name**: ArUco Drone Navigation System (Vision GPS)
+- **Location**: `/home/adam/ŻYCIE/PRACA/aruco_drone_nav`
 - **GitHub**: `github.com/asdfgh0318/aruco_drone_nav` (private)
-- **Primary User**: Adam Koszałka
+- **Primary User**: Adam Koszalka
 - **Institution**: Warsaw University of Technology
 
 ## Project Context
 
 ### What This Project Does
-Indoor drone navigation system using ceiling-mounted ArUco markers. A VR team creates flight paths in VR, exports waypoints as JSON. This system translates those waypoints to MAVLink commands for an ArduCopter drone. The drone uses a camera facing UP to detect markers on the ceiling for position feedback. Flight paths are recorded and sent back to VR for iteration.
+Indoor drone navigation system using ceiling-mounted ArUco markers. The system acts as a "Vision GPS" - detecting markers on the ceiling, calculating world-frame position, and sending VISION_POSITION_ESTIMATE to ArduCopter. The flight controller handles all navigation, PID, and failsafes.
 
 ### Hardware Setup
 - **Drone**: ArduCopter-based with Pixhawk or similar
-- **Companion Computer**: Raspberry Pi Zero W/2W
-- **Camera**: USB camera facing UP toward ceiling
-- **Markers**: 20cm ArUco markers glued to ceiling
-- **Communication**: UART serial (RPi → FC)
+- **Companion Computer**: Raspberry Pi Zero 2W (`aruconav.local`)
+- **Camera**: USB camera facing UP toward ceiling (MJPG, 1280x720)
+- **Markers**: 18cm ArUco markers (DICT_4X4_50) on A4 paper
+- **Communication**: UART serial (RPi -> FC)
 
 ### Architecture
 ```
-VR Software ──JSON──► RPi Zero ──MAVLink──► ArduCopter FC
-                ▲         │
-                │         ▼
-           Recording   USB Camera ───► Ceiling Markers
+Ceiling Markers ──► USB Camera ──► RPi Zero 2W ──► ArduCopter FC
+                                   - CLAHE preprocessing
+                                   - ArUco detection
+                                   - Position estimation
+                                   - VISION_POSITION_ESTIMATE
 ```
 
-## Current State (2024-01-14)
+## Current State (2026-02-04)
 
-### Completed
-- [x] Phase 1: Single marker hover control
-- [x] Phase 2: Multi-marker waypoint navigation
-- [x] Camera calibration module
-- [x] ArUco detection with pose estimation
-- [x] MAVLink interface (velocity commands)
-- [x] Mission executor (JSON → waypoints)
-- [x] Flight recorder (VR-compatible output)
-- [x] Position predictor (dead reckoning on marker loss)
-- [x] All testing tools (calibration, detection, MAVLink)
-- [x] Marker generator (PDFs for printing)
-- [x] Documentation (README, TECHNICAL)
+### Performance
+| Metric | Value |
+|--------|-------|
+| Resolution | 1280x720 (MJPG) |
+| Detection Rate | 95-100% |
+| Processing Time | ~270ms/frame |
+| FPS | ~3.7 |
+| Marker Size | 18cm |
 
-### Not Yet Done (See TODO.md)
-- [ ] Wiring diagrams (waiting for final parts)
-- [ ] Code adjustment to final hardware
-- [ ] Marker spacing calculator (FOV-based)
-- [ ] LiDAR integration
-- [ ] Real flight testing
+### Timing Breakdown
+```
+grab:0ms  gray:3ms  CLAHE:20ms  bgr:2ms  detect:250ms  total:275ms
+```
 
-## How I Work With This User
+### What's Working
+- [x] Single ArUco marker detection (DICT_4X4_50)
+- [x] CLAHE preprocessing for robust detection
+- [x] Position estimation and world-frame conversion
+- [x] HTTP streaming with debug viewer
+- [x] Timing instrumentation
+- [x] OpenCV crash handling (CORNER_REFINE_CONTOUR bug)
 
-### Communication Style
-- Direct, technical, no fluff
-- Uses "ultrathink" for complex planning
-- Appreciates proactive problem-solving
-- Polish native speaker (file paths may have Polish characters)
-
-### Workflow Preferences
-1. **Planning**: Always create TODO lists for multi-step tasks
-2. **Documentation**: Maintain docs thoroughly, save plans
-3. **Logging**: Use vibecoding logger (`/home/adam-koszalka/ŻYCIE/VIBECODING/vibecoding-logger/`)
-4. **Git**: Commit frequently, push to GitHub
-5. **Session End**: Log progress with "we're done" pattern
-
-### Important Paths
-- **Vibecoding Logger**: `/home/adam-koszalka/ŻYCIE/VIBECODING/vibecoding-logger/`
-- **Log Command**: `/home/adam-koszalka/ŻYCIE/VIBECODING/vibecoding-logger/log.sh`
-- **Work Logs**: `/home/adam-koszalka/ŻYCIE/VIBECODING/vibecoding-logger/WORK_LOGS`
-- **This Project**: `/home/adam-koszalka/ŻYCIE/PRACA/aruco_drone_nav`
-
-### End of Session Protocol
-1. Ensure all changes committed to git
-2. Push to GitHub
-3. Log progress: `/home/adam-koszalka/ŻYCIE/VIBECODING/vibecoding-logger/log.sh "description"`
-4. Update this file if significant changes made
+### Next Priority
+- [ ] FPS optimization (target: 10+ FPS)
+- [ ] Real flight controller testing
+- [ ] Tethered hover test
 
 ## Key Files Reference
 
 | File | Purpose |
 |------|---------|
-| `src/main.py` | Main entry point, control loops |
-| `src/aruco_detector.py` | Marker detection + pose |
+| `src/main.py` | Main entry point, stream/test/run modes |
+| `src/aruco_detector.py` | Detection + CLAHE + timing |
+| `src/position_estimator.py` | World position calculation |
 | `src/mavlink_interface.py` | ArduCopter communication |
-| `src/mission_executor.py` | JSON mission handling |
-| `src/position_predictor.py` | Dead reckoning |
+| `tools/debug_viewer.py` | Manual frame capture + timing |
 | `config/system_config.yaml` | Main configuration |
 | `config/marker_map.yaml` | Marker world positions |
-| `TODO.md` | Outstanding tasks |
-| `docs/PLAN_v1.md` | Original implementation plan |
+| `config/camera_params.yaml` | Camera calibration (720p) |
 
-## Technical Decisions Made
+## How I Work With This User
 
-1. **ArUco Dictionary**: DICT_6X6_250 (good balance of size/detection)
-2. **Marker Size**: 20cm (visible at 3-5m)
-3. **Control Method**: Velocity commands via MAVLink (not position)
-4. **Frame Rate**: 20 Hz control loop target
-5. **Coordinate System**: ENU (East-North-Up) for world frame
-6. **Failsafe**: Land on marker loss >2 seconds
+### Communication Style
+- Direct, technical, no fluff
+- Appreciates proactive problem-solving
+- Polish native speaker (paths may have Polish characters)
+
+### Workflow Preferences
+1. **Testing**: Always test on RPi via `./sync_to_rpi.sh`
+2. **Documentation**: Keep docs updated
+3. **Git**: Commit frequently with descriptive messages
+4. **Session End**: Log progress to vibecoding logger
+
+### Important Commands
+```bash
+# Sync to RPi
+./sync_to_rpi.sh
+
+# SSH to RPi
+ssh aruconav@aruconav.local
+
+# Run on RPi
+cd /home/aruconav/aruco_drone_nav
+python3 -m src.main --mode stream  # HTTP server
+python3 -m src.main --mode test    # Console output
+
+# Debug viewer (local)
+python3 tools/debug_viewer.py
+```
+
+## Technical Decisions
+
+1. **Marker Type**: Single ArUco (DICT_4X4_50) - simpler than Diamond
+2. **Marker Size**: 18cm (fits A4 with margins)
+3. **Preprocessing**: CLAHE (clipLimit=2.5, tileGridSize=8x8)
+4. **Camera Format**: MJPG (30fps at 720p, YUYV limited to 10fps)
+5. **Corner Refinement**: CORNER_REFINE_CONTOUR (with crash handling)
+6. **Coordinate System**: ENU (East-North-Up) for world frame
 
 ## Iteration History
 
-### v1 (2024-01-14) - Initial Implementation
-- Full Phase 1 and Phase 2 implementation
-- All core modules created
-- Testing tools complete
-- Documentation created
+### v3 (2026-02-04) - Single ArUco + CLAHE + Timing
+- Switched from Diamond to single ArUco markers
+- Added CLAHE preprocessing
+- Added timing instrumentation
+- Created debug_viewer.py
+- 95-100% detection rate achieved
+
+### v2 (2026-02-03) - Diamond Markers
+- Implemented ChArUco Diamond detection
+- Remote calibration support
+- Diamond marker generator
+
+### v1 (2026-01-23) - Initial RPi Deployment
+- Basic ArUco detection
+- MJPEG streaming
+- Debug GUI
 
 ## Notes for Next Session
 
 When resuming:
 1. Read this file first
-2. Check TODO.md for outstanding tasks
-3. Check git status for any uncommitted work
-4. Ask user what they want to focus on
+2. Check TODO.md for priorities
+3. Check if RPi stream is running: `ssh aruconav@aruconav.local "pgrep -f src.main"`
+4. Main focus: FPS optimization (3.7 -> 10+ FPS)
 
 ---
 
-*Last updated: 2024-01-14 by Claude*
+*Last updated: 2026-02-04 by Claude*

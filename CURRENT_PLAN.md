@@ -3,17 +3,37 @@
 ## Architecture
 RPi + Camera = Visual GPS emulator. Detects markers, calculates position, sends to FC. FC handles everything else.
 
+## Current Status (2026-02-04)
+
+### Performance on RPi Zero 2W
+| Metric | Value |
+|--------|-------|
+| Resolution | 1280x720 (MJPG) |
+| Detection Rate | 95-100% |
+| Processing Time | ~270ms/frame |
+| FPS | ~3.7 |
+| Marker Type | Single ArUco (DICT_4X4_50) |
+| Marker Size | 18cm (A4 printable) |
+
+### Timing Breakdown
+```
+grab:0ms  gray:3ms  CLAHE:20ms  bgr:2ms  detect:250ms  total:275ms
+```
+
 ## 1. Vision System
 - [x] ArUco marker detection (DICT_4X4_50)
-- [x] **ChArUco Diamond markers** (4 ArUco markers per diamond, better robustness)
+- [x] ~~ChArUco Diamond markers~~ (reverted to single markers for simplicity)
+- [x] **Single ArUco markers** (18cm, A4 printable)
+- [x] **CLAHE preprocessing** for robust detection in varying lighting
 - [x] 6-DOF pose estimation (solvePnP)
-- [x] Camera calibration (ChArUco board)
+- [x] Camera calibration (ChArUco board, 720p, 0.14 reprojection error)
 - [x] Remote calibration over network
-- [x] Wide-angle calibration (8-coefficient rational model)
-- [x] ChArUco board detection (sub-pixel pose accuracy)
-- [x] ChArUco board generator (DICT_4X4_50)
-- [x] Diamond marker generator (`tools/generate_diamonds.py`)
-- [ ] Adaptive detection parameters (lighting conditions)
+- [x] Corner refinement (CORNER_REFINE_CONTOUR with crash handling)
+- [x] Timing instrumentation (grab/gray/CLAHE/bgr/detect breakdown)
+- [ ] **FPS optimization** (target: 10+ FPS)
+  - [ ] Resolution reduction (640x480)
+  - [ ] Conditional CLAHE (skip when detection succeeds)
+  - [ ] Detection parameter tuning
 
 ## 2. Position Calculation
 - [x] Marker-to-world coordinate transform
@@ -25,42 +45,52 @@ RPi + Camera = Visual GPS emulator. Detects markers, calculates position, sends 
 - [x] Heading/yaw forwarding
 - [x] Confidence/quality indicator to FC (covariance mapping)
 - [x] Configure FC to use external vision as position source
-- [x] ENU→NED coordinate frame conversion
+- [x] ENU->NED coordinate frame conversion
 - [x] SET_GPS_GLOBAL_ORIGIN for non-GPS arming
 
 ## 4. Hardware & Deployment
 - [x] RPi Zero 2W deployment + setup script
 - [x] MJPEG camera server (remote streaming)
-- [x] USB camera at 640x480 @ 15 FPS
+- [x] USB camera at 1280x720 @ 30 FPS (MJPG)
+- [x] HTTP position server with timing data
 - [ ] Wiring diagrams (RPi-FC, camera, power)
-- [ ] Adjust code for final flight controller
-- [ ] Performance optimization for RPi Zero
+- [ ] Performance optimization for RPi Zero (FPS improvement)
 
 ## 5. Tools
-- [x] Debug GUI (video + telemetry + marker map)
-- [x] Bench test (position/velocity visualization)
-- [x] Marker PDF generator
-- [x] Chessboard PDF generator
+- [x] Debug viewer with timing display (`tools/debug_viewer.py`)
+- [x] Marker PDF generator (`tools/generate_markers.py`)
+- [x] Remote calibration (`tools/calibrate_remote.py`)
 - [x] MAVLink test tool
 - [x] Detection test tool
-- [x] Marker spacing calculator
-- [x] SITL validation tool (tools/test_sitl.py, config/sitl_params.parm)
+- [x] SITL validation tool
 
 ## 6. Testing
 - [x] Desktop detection testing
-- [x] RPi detection testing
-- [x] Camera calibration verified
+- [x] RPi detection testing (95-100% rate)
+- [x] Camera calibration verified (0.14 reprojection error)
 - [x] SITL validation (ArduCopter + vision position input)
 - [ ] Verify FC accepts vision position data
 - [ ] Hover test with vision-based position
 - [ ] Full autonomous flight test
 
 ## 7. Documentation
-- [x] README
+- [x] README (updated 2026-02-04)
 - [x] Technical docs
-- [x] HTML documentation site
+- [x] Current plan (this file)
 - [ ] Wiring diagrams
-- [x] FC configuration guide (EKF, vision parameters)
+- [x] FC configuration guide
+
+## Next Steps (Priority Order)
+
+1. **FPS Optimization** - Improve from 3.7 to 10+ FPS
+   - Reduce resolution to 640x480
+   - Make CLAHE conditional
+   - Tune detection parameters
+
+2. **Real Hardware Testing**
+   - Connect to actual flight controller
+   - Verify VISION_POSITION_ESTIMATE reception
+   - Tethered hover test
 
 ## Removed (FC handles natively)
 - ~~PID controller~~
@@ -69,3 +99,7 @@ RPi + Camera = Visual GPS emulator. Detects markers, calculates position, sends 
 - ~~Arm/disarm/mode control~~
 - ~~Failsafes~~
 - ~~Flight recorder~~
+
+---
+
+*Last updated: 2026-02-04*

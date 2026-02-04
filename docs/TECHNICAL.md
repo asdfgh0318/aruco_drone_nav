@@ -2,347 +2,235 @@
 
 ## System Overview
 
-The ArUco Drone Navigation System is designed for indoor autonomous flight using visual markers. This document covers the technical implementation details.
+The ArUco Vision GPS system provides indoor positioning for drones using ceiling-mounted ArUco markers. It acts as a GPS substitute, sending position estimates to the flight controller via MAVLink.
+
+## Architecture
+
+```
+Ceiling Markers ──► USB Camera ──► RPi Zero 2W ──► Flight Controller
+                    (MJPG 720p)    - CLAHE preprocessing
+                                   - ArUco detection
+                                   - Pose estimation
+                                   - Position calculation
+                                   - VISION_POSITION_ESTIMATE
+```
+
+## Detection Pipeline
+
+### 1. Frame Capture
+- **Format**: MJPG (required for 30fps at 720p, YUYV limited to 10fps)
+- **Resolution**: 1280x720
+- **Buffer**: Single frame buffer (minimizes latency)
+- **Threading**: Dedicated capture thread
+
+### 2. CLAHE Preprocessing
+CLAHE (Contrast Limited Adaptive Histogram Equalization) improves detection in varying lighting.
+
+```python
+clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
+gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+gray_clahe = clahe.apply(gray)
+```
+
+**Parameters**:
+- `clipLimit=2.5`: Contrast limiting threshold
+- `tileGridSize=(8,8)`: 8x8 tiles for local adaptation
+
+### 3. ArUco Detection
+```python
+detector = cv2.aruco.ArucoDetector(dictionary, params)
+corners, ids, rejected = detector.detectMarkers(frame)
+```
+
+**Detection Parameters** (tuned for ceiling markers at 1.5-2.5m):
+```python
+params.adaptiveThreshConstant = 7
+params.adaptiveThreshWinSizeMin = 3
+params.adaptiveThreshWinSizeMax = 23
+params.adaptiveThreshWinSizeStep = 10
+params.minMarkerPerimeterRate = 0.01   # Detect small/distant markers
+params.maxMarkerPerimeterRate = 4.0
+params.polygonalApproxAccuracyRate = 0.05
+params.minCornerDistanceRate = 0.01
+params.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_CONTOUR
+params.minOtsuStdDev = 5.0
+```
+
+### 4. Pose Estimation
+```python
+success, rvec, tvec = cv2.solvePnP(
+    obj_points,      # 3D marker corners
+    marker_corners,  # 2D image corners
+    camera_matrix,
+    dist_coeffs
+)
+```
+
+### 5. Position Calculation
+Transform marker-relative pose to world coordinates:
+```python
+drone_position = marker_world_position - relative_offset
+```
+
+## Performance (RPi Zero 2W)
+
+### Current Metrics
+| Metric | Value |
+|--------|-------|
+| Resolution | 1280x720 |
+| Detection Rate | 95-100% |
+| Total Time | ~270ms/frame |
+| FPS | ~3.7 |
+
+### Timing Breakdown
+| Step | Time | % |
+|------|------|---|
+| Frame grab | 0ms | 0% (buffered) |
+| BGR->Gray | 3ms | 1% |
+| CLAHE | 20ms | 7% |
+| Gray->BGR | 2ms | 1% |
+| **ArUco detect** | **250ms** | **91%** |
+
+### Bottleneck Analysis
+The ArUco detector is the main bottleneck (91% of processing time). It performs:
+1. Adaptive thresholding (3 iterations: win sizes 3, 13, 23)
+2. Contour detection
+3. Quadrilateral approximation
+4. Corner refinement
+5. Bit pattern extraction and matching
 
 ## Coordinate Frames
 
 ### Frame Definitions
-
 ```
-Camera Frame (OpenCV)     →    Drone Body Frame    →    World Frame (ENU)
-      Z (forward)                   X (forward)            X (East)
-      |                             |                      |
-      |                             |                      |
-      +---- X (right)               +---- Y (right)        +---- Y (North)
-     /                             /                      /
-    Y (down)                      Z (down)               Z (Up)
+Camera Frame (OpenCV)     →    World Frame (ENU)
+      Z (forward/up)               X (East)
+      |                            |
+      |                            |
+      +---- X (right)              +---- Y (North)
+     /                            /
+    Y (down)                     Z (Up)
 ```
 
-### Transformations
+### MAVLink Conversion (ENU to NED)
+```python
+# ENU (estimator) to NED (MAVLink)
+mavlink_x = enu_y    # North = ENU Y
+mavlink_y = enu_x    # East = ENU X
+mavlink_z = -enu_z   # Down = -ENU Z
+```
 
-1. **Camera to Body**: Accounts for camera mounting (facing up)
-   - Camera Z → Body -Z
-   - Camera X → Body Y
-   - Camera Y → Body X
+## Configuration
 
-2. **Body to World**: Uses drone's yaw angle
-   - Body X → World Y (when yaw=0, drone faces North)
-   - Body Y → World X
-   - Body Z → World -Z
-
-## Module Details
-
-### 1. ArUco Detector (`aruco_detector.py`)
-
-**Purpose**: Detect ArUco markers and estimate 6-DOF pose
-
-**Key Classes**:
-- `MarkerDetection`: Dataclass containing marker ID, corners, rvec, tvec, distance
-- `ArucoDetector`: Main detection class with threaded camera capture
-
-**Detection Pipeline**:
-1. Capture frame from USB camera (threaded)
-2. Convert to grayscale
-3. Detect markers using `cv2.aruco.ArucoDetector`
-4. Estimate pose with `cv2.solvePnP` for each marker
-5. Return list of `MarkerDetection` objects
-
-**Configuration**:
+### system_config.yaml
 ```yaml
+camera:
+  device_id: 0
+  width: 1280
+  height: 720
+  fps: 30
+  # exposure_time_us: 5000  # Manual exposure (uncomment if needed)
+
 aruco:
-  dictionary: "DICT_6X6_250"  # 6x6 bit pattern, 250 unique IDs
-  marker_size_m: 0.20         # Physical size in meters
+  dictionary: "DICT_4X4_50"
+  marker_size_m: 0.18       # 18cm for A4 paper
+
+control:
+  loop_rate_hz: 20
 ```
 
-**Supported Dictionaries**:
-- DICT_4X4_50/100/250/1000
-- DICT_5X5_50/100/250/1000
-- DICT_6X6_50/100/250/1000 (recommended)
-- DICT_7X7_50/100/250/1000
+### marker_map.yaml
+```yaml
+markers:
+  - id: 0
+    position: [0.0, 0.0, 3.0]  # X, Y, Z (ceiling height in meters)
+    orientation: 0              # Rotation in degrees
+    description: "Origin marker"
+```
 
-### 2. Position Estimator (`position_estimator.py`)
+### camera_params.yaml
+```yaml
+camera_matrix:
+  - [458.18, 0.0, 323.35]
+  - [0.0, 458.35, 243.95]
+  - [0.0, 0.0, 1.0]
+distortion_coefficients:
+  - [-0.427, 0.179, 0.001, -0.0001, 0.113]
+image_width: 640
+image_height: 480
+reprojection_error: 0.142
+```
 
-**Purpose**: Transform marker poses to world-frame drone position
+## Known Issues
 
-**Key Classes**:
-- `MarkerConfig`: Marker ID with world position and orientation
-- `DroneState`: Estimated position, yaw, confidence
-- `PositionEstimator`: Multi-marker position estimation
-- `SimplePositionEstimator`: Single-marker offset calculation (Phase 1)
+### OpenCV CORNER_REFINE_CONTOUR Crash
+Rare assertion error in OpenCV's contour refinement:
+```
+cv2.error: (-215:Assertion failed) nContours.size() >= 2 in function '_interpolate2Dline'
+```
 
-**Algorithm**:
-1. For each detected marker:
-   - Look up marker's world position from map
-   - Transform marker-relative pose to world frame
-   - Calculate drone position: `drone_pos = marker_world_pos - relative_offset`
-
-2. Multi-marker fusion:
-   - Weight by inverse distance (closer markers more accurate)
-   - Weighted average of positions
-   - Handle yaw wraparound for averaging
-
-**Filtering**:
-- Low-pass filter on position (configurable alpha)
-- Smooths noise while maintaining responsiveness
-
-### 3. MAVLink Interface (`mavlink_interface.py`)
-
-**Purpose**: Communication with ArduCopter flight controller
-
-**Key Classes**:
-- `FlightMode`: Enum of ArduCopter modes (GUIDED, LOITER, LAND, etc.)
-- `TelemetryData`: Current drone state from FC
-- `MAVLinkInterface`: Connection and command handling
-
-**Connection**:
+**Solution**: Wrap detection in try-except, skip bad frames:
 ```python
-mav = MAVLinkInterface("/dev/serial0", baud=921600)
-mav.connect(timeout=30.0)  # Waits for heartbeat
+try:
+    corners, ids, rejected = detector.detectMarkers(frame)
+except cv2.error as e:
+    logger.warning(f"Detection error (skipping frame): {e}")
+    corners, ids, rejected = [], None, []
 ```
 
-**Commands**:
-| Method | MAVLink Message | Description |
-|--------|-----------------|-------------|
-| `arm()` | MAV_CMD_COMPONENT_ARM_DISARM | Arm motors |
-| `disarm()` | MAV_CMD_COMPONENT_ARM_DISARM | Disarm motors |
-| `set_mode()` | SET_MODE | Change flight mode |
-| `takeoff()` | MAV_CMD_NAV_TAKEOFF | Command takeoff |
-| `land()` | MAV_CMD_NAV_LAND | Command landing |
-| `send_velocity()` | SET_POSITION_TARGET_LOCAL_NED | Velocity command |
-| `send_position_target()` | SET_POSITION_TARGET_LOCAL_NED | Position command |
-
-**Velocity Command (Primary Control)**:
+### YUYV Format Limitation
+YUYV format at 720p is limited to 10fps. Solution: Use MJPG format.
 ```python
-# Body frame velocity command
-mav.send_velocity(
-    vx=0.5,      # Forward (m/s)
-    vy=0.0,      # Right (m/s)
-    vz=-0.1,     # Down (m/s), negative = climb
-    yaw_rate=0.0 # Yaw rate (rad/s)
-)
+cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
 ```
 
-### 4. Mission Executor (`mission_executor.py`)
+## HTTP API
 
-**Purpose**: Parse and execute waypoint missions
+### Endpoints
 
-**State Machine**:
-```
-IDLE → LOADING → READY → TAKING_OFF → NAVIGATING ↔ AT_WAYPOINT → LANDING → COMPLETE
-                              ↓
-                          ABORTED/ERROR
-```
-
-**Mission Format**:
+**GET /position**
+Returns JSON with position and timing:
 ```json
 {
-  "mission_id": "string",
-  "waypoints": [
-    {"x": float, "y": float, "z": float, "yaw": float, "hold_time": float}
-  ],
-  "settings": {
-    "max_speed": float,
-    "position_tolerance": float,
-    "yaw_tolerance": float
+  "timestamp": 1707057600.123,
+  "x": 0.35,
+  "y": -1.06,
+  "z": 1.75,
+  "yaw": 83.5,
+  "marker_ids": [0],
+  "confidence": 1.0,
+  "detection_rate": 0.98,
+  "timing": {
+    "grab": 0,
+    "gray": 3,
+    "clahe": 20,
+    "bgr": 2,
+    "detect": 250,
+    "total": 275
   }
 }
 ```
 
-**Navigation Algorithm**:
-1. Calculate error vector to waypoint
-2. Apply P-control: `velocity = Kp * error`
-3. Limit to max_speed
-4. Send velocity command
-5. Check if within tolerance → advance to next waypoint
+**GET /debug-frame**
+Returns JPEG image with detection overlay.
 
-### 5. Position Predictor (`position_predictor.py`)
+## Optimization Opportunities
 
-**Purpose**: Dead reckoning when markers temporarily lost
+### Priority 1: Resolution Reduction
+- Change from 1280x720 to 640x480
+- Reduces pixels by 75%
+- Expected: 3-4x faster detection
 
-**Algorithm**:
-1. Maintain rolling history of positions with timestamps
-2. Estimate velocity using exponential smoothing
-3. On marker loss:
-   - Predict position: `pos = last_pos + velocity * dt`
-   - Decay confidence over time
-   - Timeout after max_prediction_time
+### Priority 2: Conditional CLAHE
+- Try detection on raw grayscale first
+- Only apply CLAHE if detection fails
+- Saves ~20ms when lighting is good
 
-**Velocity Estimation**:
-```python
-# Exponential smoothing
-alpha = 0.3
-new_velocity = (position - prev_position) / dt
-velocity = alpha * new_velocity + (1 - alpha) * velocity
-```
-
-### 6. Flight Recorder (`flight_recorder.py`)
-
-**Purpose**: Record flight path for VR feedback
-
-**Recording Format**:
-```json
-{
-  "recording_id": "flight_20240114_103000",
-  "mission_id": "original_mission_id",
-  "start_time": "2024-01-14T10:30:00Z",
-  "samples": [
-    {"t": 0.0, "x": 0.0, "y": 0.0, "z": 1.5, "yaw": 0, "markers": [0], "conf": 1.0}
-  ]
-}
-```
-
-**Features**:
-- Configurable sample rate (default 10 Hz)
-- Rate-limited sampling with `add_sample()`
-- Thread-safe recording
-- Automatic timestamping
-
-## Control Architecture
-
-### Control Loop (20 Hz default)
-
-```python
-while running:
-    # 1. Detect markers
-    detections = detector.detect()
-
-    # 2. Estimate position (or predict if lost)
-    if detections:
-        state = estimator.estimate(detections)
-        predictor.update(state)
-    else:
-        state = predictor.predict()
-
-    # 3. Calculate control output
-    error = target - state.position
-    velocity = pid.update(error)
-
-    # 4. Send command
-    mavlink.send_velocity(velocity)
-
-    # 5. Record (if enabled)
-    recorder.add_state(state)
-
-    # 6. Rate limit
-    sleep(loop_period - elapsed)
-```
-
-### PID Controller
-
-Simple P/PD control for position:
-- **Kp** = 0.5 (position proportional)
-- **Kd** = 0.1 (derivative for damping)
-- **Ki** = 0.0 (no integral, handled by FC)
-
-Output limited to max_velocity (default 0.5 m/s horizontal, 0.3 m/s vertical)
-
-## Performance Considerations
-
-### RPi Zero Optimization
-
-- Camera resolution: 640x480 max (320x240 for better performance)
-- Target frame rate: 15-20 FPS
-- Threaded camera capture to avoid blocking
-- Grayscale detection (color not needed for ArUco)
-
-### Latency Budget
-
-| Component | Typical Latency |
-|-----------|-----------------|
-| Camera capture | 30-50 ms |
-| ArUco detection | 10-20 ms |
-| Pose estimation | 5-10 ms |
-| MAVLink TX | 1-2 ms |
-| **Total** | ~50-80 ms |
-
-## Safety Systems
-
-### Marker Loss Handling
-
-1. **Detection**: No markers found for 1+ frames
-2. **Prediction**: Use dead reckoning (up to 2 seconds)
-3. **Timeout**: Trigger failsafe landing
-
-### Failsafe Triggers
-
-- Marker loss timeout exceeded
-- Low battery voltage (< 10.5V for 3S)
-- Signal handler (Ctrl+C) - graceful shutdown
-- Exception in control loop
-
-### Failsafe Actions
-
-1. Log warning/error
-2. Set mode to LAND
-3. Stop control loop
-4. Save recording (if active)
-
-## Configuration Reference
-
-### system_config.yaml
-
-```yaml
-serial:
-  port: "/dev/serial0"          # Serial port
-  baud: 921600                  # Baud rate
-
-camera:
-  device_id: 0                  # Camera index
-  width: 640
-  height: 480
-  fps: 30
-
-aruco:
-  dictionary: "DICT_6X6_250"
-  marker_size_m: 0.20
-
-control:
-  position_kp: 0.5
-  position_ki: 0.0
-  position_kd: 0.1
-  max_velocity_xy: 0.5
-  max_velocity_z: 0.3
-  position_tolerance: 0.10
-  loop_rate_hz: 20
-
-safety:
-  max_altitude: 2.5
-  min_altitude: 0.3
-  marker_loss_timeout: 2.0
-  low_battery_voltage: 10.5
-```
-
-### marker_map.yaml
-
-```yaml
-markers:
-  - id: 0
-    position: [0.0, 0.0, 3.0]   # X, Y, Z (ceiling height)
-    orientation: 0               # Rotation in degrees
-    description: "Origin marker"
-```
-
-## Testing
-
-### SITL Testing
-
-ArduCopter Software-In-The-Loop simulation:
-```bash
-# Start SITL (in ArduPilot directory)
-sim_vehicle.py -v ArduCopter --console --map
-
-# Connect with UDP
-python -m src.main --mode ground_test --config config/sitl_config.yaml
-```
-
-### Hardware Testing Sequence
-
-1. **Camera test**: `tools/test_aruco_detection.py`
-2. **MAVLink test**: `tools/test_mavlink.py`
-3. **Ground test**: `--mode ground_test` (no flight)
-4. **Tethered hover**: `--mode hover` with safety tether
-5. **Free flight**: After successful tethered tests
+### Priority 3: Detection Parameter Tuning
+- Reduce `adaptiveThreshWinSizeMax` (23 -> 15)
+- Increase `minMarkerPerimeterRate` (0.01 -> 0.05)
+- Enable `aprilTagQuadDecimate = 2.0`
 
 ---
 
-*Last updated: 2024-01-14*
+*Last updated: 2026-02-04*
