@@ -50,6 +50,9 @@ recordings/*.json
 *.temp
 /tmp/
 
+# Debug images
+debug_*.jpg
+
 # Generated markers (can be regenerated)
 markers/*.png
 markers/*.pdf
