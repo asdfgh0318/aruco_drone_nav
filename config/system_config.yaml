@@ -4,7 +4,7 @@
 
 serial:
   port: "/dev/serial0"          # RPi UART port (or /dev/ttyAMA0)
-  baud: 921600                   # MAVLink baud rate
+  baud: 115200                   # MAVLink baud rate
 
 camera:
   device_id: 0                   # USB camera device ID
@@ -23,9 +23,12 @@ control:
 vision_server:
   port: 8001                     # HTTP server port for stream mode
 
+gps_emulation: true                # true = send GPS_INPUT (works on any firmware)
+                                   # false = send VISION_POSITION_ESTIMATE (needs VISO params)
+
 ekf_origin:
-  lat: 52.2297                   # Latitude for EKF origin (any location works)
-  lon: 21.0122                   # Longitude for EKF origin
+  lat: 52.2297                   # Latitude for GPS origin (Warsaw)
+  lon: 21.0122                   # Longitude for GPS origin
   alt: 100.0                     # Altitude (meters above sea level)
 
 logging:

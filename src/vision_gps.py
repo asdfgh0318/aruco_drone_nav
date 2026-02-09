@@ -330,7 +330,14 @@ def main():
             log.error("Failed to connect to flight controller")
             sys.exit(1)
         origin = cfg.get("ekf_origin", {})
-        mavlink.set_ekf_origin(origin.get("lat", 52.2297), origin.get("lon", 21.0122), origin.get("alt", 100.0))
+        origin_lat = origin.get("lat", 52.2297)
+        origin_lon = origin.get("lon", 21.0122)
+        origin_alt = origin.get("alt", 100.0)
+        gps_mode = cfg.get("gps_emulation", True)
+        if gps_mode:
+            log.info("Using GPS emulation mode")
+        else:
+            mavlink.set_ekf_origin(origin_lat, origin_lon, origin_alt)
 
     server = None
     if args.mode == "stream":
@@ -362,9 +369,16 @@ def main():
                 last_state = state
 
             if args.mode == "run" and state and mavlink:
-                mavlink.send_vision_position(
-                    x=state.y, y=state.x, z=-state.z,  # ENU -> NED
-                    yaw=np.radians(state.yaw), confidence=state.confidence)
+                if gps_mode:
+                    mavlink.send_gps_input(
+                        x_enu=state.x, y_enu=state.y, z_enu=state.z,
+                        yaw_deg=state.yaw, origin_lat=origin_lat,
+                        origin_lon=origin_lon, origin_alt=origin_alt,
+                        confidence=state.confidence)
+                else:
+                    mavlink.send_vision_position(
+                        x=state.y, y=state.x, z=-state.z,  # ENU -> NED
+                        yaw=np.radians(state.yaw), confidence=state.confidence)
 
             if args.mode == "test":
                 if state:

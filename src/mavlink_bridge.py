@@ -1,5 +1,6 @@
-"""Minimal MAVLink bridge - sends vision position estimates to flight controller."""
+"""Minimal MAVLink bridge - sends vision position or GPS emulation to flight controller."""
 
+import math
 import time
 import threading
 import logging
@@ -25,9 +26,28 @@ class MAVLinkBridge:
             kwargs = {"source_system": 255, "source_component": 0}
             if self.port.startswith("/dev"):
                 kwargs["baud"] = self.baud
+                # Workaround: pyserial on RPi PL011 (ttyAMA0) throws
+                # "device reports readiness to read but returned no data"
+                try:
+                    import serial
+                    _orig_read = serial.Serial.read
+                    def _safe_read(self_ser, size=1):
+                        try:
+                            return _orig_read(self_ser, size)
+                        except serial.SerialException:
+                            return b''
+                    serial.Serial.read = _safe_read
+                except ImportError:
+                    pass
             self.conn = mavutil.mavlink_connection(self.port, **kwargs)
 
-            log.info("Waiting for heartbeat...")
+            # ArduPilot requires heartbeats before it streams on non-primary UARTs
+            log.info("Sending heartbeats to wake up FC...")
+            for _ in range(5):
+                self._send_heartbeat()
+                time.sleep(0.3)
+
+            log.info("Waiting for FC heartbeat...")
             msg = self.conn.wait_heartbeat(timeout=timeout)
             if msg is None:
                 log.error("No heartbeat received")
@@ -46,6 +66,13 @@ class MAVLinkBridge:
             log.error(f"Connection failed: {e}")
             return False
 
+    def _send_heartbeat(self):
+        if self.conn:
+            self.conn.mav.heartbeat_send(
+                mavutil.mavlink.MAV_TYPE_GCS,
+                mavutil.mavlink.MAV_AUTOPILOT_INVALID,
+                0, 0, 0)
+
     def disconnect(self):
         self._running = False
         if self._thread:
@@ -56,8 +83,14 @@ class MAVLinkBridge:
         log.info("Disconnected")
 
     def _receive_loop(self):
+        last_hb_sent = 0.0
         while self._running and self.conn:
             try:
+                # Send heartbeat at 1Hz to keep FC streaming
+                now = time.time()
+                if now - last_hb_sent >= 1.0:
+                    self._send_heartbeat()
+                    last_hb_sent = now
                 msg = self.conn.recv_match(blocking=True, timeout=0.1)
                 if msg and msg.get_type() == "HEARTBEAT":
                     self._last_heartbeat = time.time()
@@ -84,6 +117,45 @@ class MAVLinkBridge:
         ]
         self.conn.mav.vision_position_estimate_send(
             usec, x, y, z, roll, pitch, yaw, covariance, 0
+        )
+
+    def send_gps_input(self, x_enu, y_enu, z_enu, yaw_deg, origin_lat, origin_lon, origin_alt, confidence=1.0):
+        """Send GPS_INPUT emulating a GPS fix from ENU position relative to origin."""
+        if not self.conn:
+            return
+        lat = origin_lat + (y_enu / 111111.0)
+        lon = origin_lon + (x_enu / (111111.0 * math.cos(math.radians(origin_lat))))
+        alt = origin_alt + z_enu
+        hdop = max(0.5, 1.0 / max(confidence, 0.01))
+        vdop = hdop * 1.5
+        # yaw: GPS_INPUT expects centidegrees, 0=North, CW positive, 0-36000
+        yaw_cd = int(((yaw_deg % 360) + 360) % 360 * 100)
+        # GPS epoch: Jan 6 1980 00:00:00 UTC
+        gps_epoch = 315964800.0
+        gps_seconds = time.time() - gps_epoch
+        gps_week = int(gps_seconds / 604800)
+        gps_week_ms = int((gps_seconds % 604800) * 1000)
+        self.conn.mav.gps_input_send(
+            int(time.time() * 1e6),   # time_usec
+            0,                        # gps_id
+            (mavutil.mavlink.GPS_INPUT_IGNORE_FLAG_SPEED_ACCURACY |
+             mavutil.mavlink.GPS_INPUT_IGNORE_FLAG_VERTICAL_ACCURACY),
+            gps_week_ms,              # time_week_ms (uint32)
+            gps_week,                 # time_week (uint16)
+            3,                        # fix_type: 3D fix
+            int(lat * 1e7),           # lat (degE7)
+            int(lon * 1e7),           # lon (degE7)
+            alt,                      # alt (m)
+            hdop,                     # hdop
+            vdop,                     # vdop
+            0.0,                      # vn (m/s)
+            0.0,                      # ve (m/s)
+            0.0,                      # vd (m/s)
+            0.01,                     # speed_accuracy (m/s)
+            max(0.1, 0.5 / max(confidence, 0.01)),  # horiz_accuracy (m)
+            max(0.2, 1.0 / max(confidence, 0.01)),  # vert_accuracy (m)
+            12,                       # satellites_visible
+            yaw_cd,                   # yaw (centidegrees)
         )
 
     def set_ekf_origin(self, lat, lon, alt):
