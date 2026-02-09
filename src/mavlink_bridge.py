@@ -86,7 +86,7 @@ class MAVLinkBridge:
             usec, x, y, z, roll, pitch, yaw, covariance, 0
         )
 
-    def set_ekf_origin(self, lat=52.2297, lon=21.0122, alt=100.0):
+    def set_ekf_origin(self, lat, lon, alt):
         if not self.conn:
             return
         self.conn.mav.set_gps_global_origin_send(

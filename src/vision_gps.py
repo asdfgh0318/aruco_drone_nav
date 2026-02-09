@@ -329,7 +329,8 @@ def main():
         if not mavlink.connect(timeout=30.0):
             log.error("Failed to connect to flight controller")
             sys.exit(1)
-        mavlink.set_ekf_origin()
+        origin = cfg.get("ekf_origin", {})
+        mavlink.set_ekf_origin(origin.get("lat", 52.2297), origin.get("lon", 21.0122), origin.get("alt", 100.0))
 
     server = None
     if args.mode == "stream":

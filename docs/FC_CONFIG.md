@@ -27,7 +27,7 @@ Use `EK3_SRC1_POSZ = 6` instead of `1` only if your ArUco altitude estimate is r
 VISO_TYPE      = 1     # MAVLink (VISION_POSITION_ESTIMATE)
 VISO_POS_M_NSE = 0.2   # Position noise floor (meters)
 VISO_YAW_M_NSE = 0.3   # Yaw noise floor (radians, ~17 degrees)
-VISO_DELAY_MS  = 80    # Pipeline latency: capture + detection + send (ms)
+VISO_DELAY_MS  = 140   # Pipeline latency on RPi Zero 2W (~140ms processing)
 VISO_POS_X     = 0.0   # Camera offset forward from center of gravity
 VISO_POS_Y     = 0.0   # Camera offset right from center of gravity
 VISO_POS_Z     = 0.0   # Camera offset down from center of gravity
@@ -62,18 +62,29 @@ VISION_POSITION_ESTIMATE uses NED (North-East-Down):
 
 The Vision GPS software converts from its internal ENU frame automatically.
 
+## Serial Port Setup
+
+The RPi connects to the FC via UART. Set the serial port parameters for whichever UART you connect to:
+
+```
+SERIALn_PROTOCOL = 2    # MAVLink2 (replace n with your UART number)
+SERIALn_BAUD = 921      # 921600 baud
+```
+
+See [WIRING.md](WIRING.md) for physical connection details.
+
 ## Tuning VISO_DELAY_MS
 
 This compensates for the time between camera capture and the FC receiving the position estimate. Too low causes oscillation, too high causes sluggish response.
 
-Measure your pipeline latency:
-1. Camera capture: ~30ms (USB camera at 30 FPS)
-2. ArUco detection + pose: ~10-20ms
-3. Position estimation: ~1ms
-4. MAVLink send: ~5ms
-5. **Total: ~50-80ms**
+Pipeline latency on RPi Zero 2W:
+1. Camera capture: ~30ms (USB MJPG at 30 FPS)
+2. CLAHE preprocessing: ~20ms
+3. ArUco detection + pose: ~110ms
+4. Position estimation + MAVLink send: ~5ms
+5. **Total: ~140ms**
 
-Start with `80` and adjust if you see position hold oscillation.
+Start with `140` and adjust if you see position hold oscillation.
 
 ## Compatible Flight Modes
 

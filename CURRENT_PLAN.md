@@ -55,10 +55,10 @@ gray:3ms  CLAHE:20ms  bgr:2ms  detect:110ms  total:135ms
 ## Next: Real Drone Testing
 
 ### Pre-Flight Checklist
-1. [ ] Wire RPi to FC (UART serial, 921600 baud)
-2. [ ] Mount camera facing up on drone frame
-3. [ ] Set FC parameters (see docs/FC_CONFIG.md)
-4. [ ] Mount marker(s) on ceiling above test area
+1. [ ] Wire RPi to FC (see docs/WIRING.md - SpeedyBee F405 V3)
+2. [x] Mount camera facing up on drone frame
+3. [ ] Set FC parameters via Mission Planner (see docs/FC_CONFIG.md)
+4. [x] Mount marker(s) on ceiling above test area
 5. [ ] Measure marker position(s) and update marker_map.yaml
 
 ### Test Sequence

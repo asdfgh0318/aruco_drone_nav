@@ -23,6 +23,11 @@ control:
 vision_server:
   port: 8001                     # HTTP server port for stream mode
 
+ekf_origin:
+  lat: 52.2297                   # Latitude for EKF origin (any location works)
+  lon: 21.0122                   # Longitude for EKF origin
+  alt: 100.0                     # Altitude (meters above sea level)
+
 logging:
   level: "INFO"                  # DEBUG, INFO, WARNING, ERROR
   file: "flight_log.txt"         # Log file name

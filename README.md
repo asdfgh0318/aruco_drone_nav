@@ -145,6 +145,7 @@ See [docs/FC_CONFIG.md](docs/FC_CONFIG.md) for full parameter list and tuning gu
 
 ## Documentation
 
+- **[WIRING.md](docs/WIRING.md)** - RPi + SpeedyBee F405 V3 wiring guide
 - **[FC_CONFIG.md](docs/FC_CONFIG.md)** - Flight controller configuration
 - **[TECHNICAL.md](docs/TECHNICAL.md)** - Algorithms, coordinate frames, timing
 - **[TESTING.md](docs/TESTING.md)** - Testing procedures

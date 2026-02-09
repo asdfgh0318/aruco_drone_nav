@@ -3,10 +3,10 @@
 ## Priority: Critical - Real Drone Testing
 
 ### Hardware Setup
-- [ ] **Wire RPi to FC** - UART serial (TX→RX, RX→TX), 921600 baud
-- [ ] **Mount camera** - Facing up, centered on drone frame
-- [ ] **Set FC parameters** - See docs/FC_CONFIG.md for full list
-- [ ] **Mount ceiling markers** - Measure positions, update marker_map.yaml
+- [ ] **Wire RPi to FC** - See docs/WIRING.md (SpeedyBee F405 V3)
+- [x] **Mount camera** - Facing up, centered on drone frame
+- [ ] **Set FC parameters** - See docs/FC_CONFIG.md, load via Mission Planner
+- [x] **Mount ceiling markers** - Marker ID 0 on ~3m ceiling
 
 ### Test Sequence
 - [ ] **Bench test** - RPi + FC on bench, verify VISION_POSITION_ESTIMATE received in MAVLink Inspector
