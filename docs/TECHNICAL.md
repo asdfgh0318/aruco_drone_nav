@@ -10,10 +10,17 @@ The ArUco Vision GPS system provides indoor positioning for drones using ceiling
 Ceiling Markers ──► USB Camera ──► RPi Zero 2W ──► Flight Controller
                     (MJPG 720p)    - CLAHE preprocessing
                                    - ArUco detection
-                                   - Pose estimation
+                                   - Pose estimation (solvePnP)
                                    - Position calculation
                                    - VISION_POSITION_ESTIMATE
 ```
+
+### Source Files
+| File | Lines | Purpose |
+|------|-------|---------|
+| `src/vision_gps.py` | ~393 | Camera, detection, position estimation, HTTP server, main loop |
+| `src/mavlink_bridge.py` | ~97 | MAVLink connection, send vision position, set EKF origin |
+| `src/__main__.py` | 3 | Entry point (`python3 -m src`) |
 
 ## Detection Pipeline
 
@@ -24,17 +31,11 @@ Ceiling Markers ──► USB Camera ──► RPi Zero 2W ──► Flight Cont
 - **Threading**: Dedicated capture thread
 
 ### 2. CLAHE Preprocessing
-CLAHE (Contrast Limited Adaptive Histogram Equalization) improves detection in varying lighting.
-
 ```python
 clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-gray_clahe = clahe.apply(gray)
+enhanced = clahe.apply(gray)
 ```
-
-**Parameters**:
-- `clipLimit=2.5`: Contrast limiting threshold
-- `tileGridSize=(8,8)`: 8x8 tiles for local adaptation
 
 ### 3. ArUco Detection
 ```python
@@ -58,179 +59,58 @@ params.minOtsuStdDev = 5.0
 
 ### 4. Pose Estimation
 ```python
-success, rvec, tvec = cv2.solvePnP(
-    obj_points,      # 3D marker corners
-    marker_corners,  # 2D image corners
-    camera_matrix,
-    dist_coeffs
-)
+success, rvec, tvec = cv2.solvePnP(obj_points, marker_corners, camera_matrix, dist_coeffs)
 ```
 
 ### 5. Position Calculation
-Transform marker-relative pose to world coordinates:
+Camera → Body → World frame transforms:
 ```python
-drone_position = marker_world_position - relative_offset
+CAM_TO_BODY = [[0,1,0], [1,0,0], [0,0,-1]]     # Camera facing up
+BODY_TO_WORLD_BASE = [[0,1,0], [1,0,0], [0,0,-1]]  # Drone faces North
+drone_position = marker_world_position - (yaw_rotation @ BODY_TO_WORLD_BASE @ CAM_TO_BODY @ tvec)
 ```
+
+Low-pass filter (alpha=0.7) with yaw wraparound handling.
 
 ## Performance (RPi Zero 2W)
 
-### Current Metrics
 | Metric | Value |
 |--------|-------|
 | Resolution | 1280x720 |
-| Detection Rate | 95-100% |
-| Total Time | ~270ms/frame |
-| FPS | ~3.7 |
+| Detection Rate | 99-100% |
+| Total Time | ~140ms/frame |
+| FPS | ~6 |
 
 ### Timing Breakdown
 | Step | Time | % |
 |------|------|---|
-| Frame grab | 0ms | 0% (buffered) |
-| BGR->Gray | 3ms | 1% |
-| CLAHE | 20ms | 7% |
+| BGR->Gray | 3ms | 2% |
+| CLAHE | 20ms | 14% |
 | Gray->BGR | 2ms | 1% |
-| **ArUco detect** | **250ms** | **91%** |
-
-### Bottleneck Analysis
-The ArUco detector is the main bottleneck (91% of processing time). It performs:
-1. Adaptive thresholding (3 iterations: win sizes 3, 13, 23)
-2. Contour detection
-3. Quadrilateral approximation
-4. Corner refinement
-5. Bit pattern extraction and matching
+| **ArUco detect** | **110ms** | **79%** |
 
 ## Coordinate Frames
 
-### Frame Definitions
-```
-Camera Frame (OpenCV)     →    World Frame (ENU)
-      Z (forward/up)               X (East)
-      |                            |
-      |                            |
-      +---- X (right)              +---- Y (North)
-     /                            /
-    Y (down)                     Z (Up)
-```
-
 ### MAVLink Conversion (ENU to NED)
 ```python
-# ENU (estimator) to NED (MAVLink)
 mavlink_x = enu_y    # North = ENU Y
 mavlink_y = enu_x    # East = ENU X
 mavlink_z = -enu_z   # Down = -ENU Z
 ```
 
-## Configuration
+## HTTP API (Stream Mode)
 
-### system_config.yaml
-```yaml
-camera:
-  device_id: 0
-  width: 1280
-  height: 720
-  fps: 30
-  # exposure_time_us: 5000  # Manual exposure (uncomment if needed)
-
-aruco:
-  dictionary: "DICT_4X4_50"
-  marker_size_m: 0.18       # 18cm for A4 paper
-
-control:
-  loop_rate_hz: 20
-```
-
-### marker_map.yaml
-```yaml
-markers:
-  - id: 0
-    position: [0.0, 0.0, 3.0]  # X, Y, Z (ceiling height in meters)
-    orientation: 0              # Rotation in degrees
-    description: "Origin marker"
-```
-
-### camera_params.yaml
-```yaml
-camera_matrix:
-  - [458.18, 0.0, 323.35]
-  - [0.0, 458.35, 243.95]
-  - [0.0, 0.0, 1.0]
-distortion_coefficients:
-  - [-0.427, 0.179, 0.001, -0.0001, 0.113]
-image_width: 640
-image_height: 480
-reprojection_error: 0.142
-```
+**GET /position** - JSON with position and timing data
+**GET /debug-frame** - JPEG image of current camera frame
 
 ## Known Issues
 
 ### OpenCV CORNER_REFINE_CONTOUR Crash
-Rare assertion error in OpenCV's contour refinement:
-```
-cv2.error: (-215:Assertion failed) nContours.size() >= 2 in function '_interpolate2Dline'
-```
-
-**Solution**: Wrap detection in try-except, skip bad frames:
-```python
-try:
-    corners, ids, rejected = detector.detectMarkers(frame)
-except cv2.error as e:
-    logger.warning(f"Detection error (skipping frame): {e}")
-    corners, ids, rejected = [], None, []
-```
+Rare assertion error handled by try-except, skipping bad frames.
 
 ### YUYV Format Limitation
-YUYV format at 720p is limited to 10fps. Solution: Use MJPG format.
-```python
-cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
-```
-
-## HTTP API
-
-### Endpoints
-
-**GET /position**
-Returns JSON with position and timing:
-```json
-{
-  "timestamp": 1707057600.123,
-  "x": 0.35,
-  "y": -1.06,
-  "z": 1.75,
-  "yaw": 83.5,
-  "marker_ids": [0],
-  "confidence": 1.0,
-  "detection_rate": 0.98,
-  "timing": {
-    "grab": 0,
-    "gray": 3,
-    "clahe": 20,
-    "bgr": 2,
-    "detect": 250,
-    "total": 275
-  }
-}
-```
-
-**GET /debug-frame**
-Returns JPEG image with detection overlay.
-
-## Optimization Opportunities
-
-### Priority 1: Resolution Reduction
-- Change from 1280x720 to 640x480
-- Reduces pixels by 75%
-- Expected: 3-4x faster detection
-
-### Priority 2: Conditional CLAHE
-- Try detection on raw grayscale first
-- Only apply CLAHE if detection fails
-- Saves ~20ms when lighting is good
-
-### Priority 3: Detection Parameter Tuning
-- Reduce `adaptiveThreshWinSizeMax` (23 -> 15)
-- Increase `minMarkerPerimeterRate` (0.01 -> 0.05)
-- Enable `aprilTagQuadDecimate = 2.0`
+YUYV at 720p limited to 10fps. Solution: MJPG format.
 
 ---
 
-*Last updated: 2026-02-04*
+*Last updated: 2026-02-09*

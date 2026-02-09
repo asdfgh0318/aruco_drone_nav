@@ -51,7 +51,7 @@ rsync -avz --progress $DRY_RUN \
 if [[ $? -eq 0 ]]; then
     echo -e "${GREEN}Sync complete!${NC}"
     if [[ -z "$DRY_RUN" ]]; then
-        echo -e "Run on RPi: ${YELLOW}cd ${RPI_PATH} && python3 -m src.main --mode test${NC}"
+        echo -e "Run on RPi: ${YELLOW}cd ${RPI_PATH} && python3 -m src --mode test${NC}"
     fi
 else
     echo -e "${RED}Sync failed${NC}"

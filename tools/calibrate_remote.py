@@ -2,16 +2,16 @@
 """
 Remote Camera Calibration Tool
 
-Calibrates camera using chessboard pattern via network stream.
+Calibrates camera using ChArUco board pattern via network stream.
 Connects to RPi camera server and captures calibration images.
 
 Usage:
-    python calibrate_remote.py --host 10.156.64.251 --port 8000
+    python calibrate_remote.py --host aruconav.local --port 8000
 
 Instructions:
-    1. Print the chessboard pattern (markers/chessboard_9x6.pdf)
+    1. Display/print the ChArUco board (markers/charuco_board_*.png)
     2. Run this tool
-    3. Show chessboard to camera at various angles
+    3. Show board to camera at various angles
     4. Press SPACE to capture when corners are detected (green)
     5. Capture at least 10 images from different angles
     6. Press 'c' to calibrate and save
@@ -86,30 +86,48 @@ class MJPEGReader:
 
 
 class RemoteCalibrator:
-    """Camera calibration using remote stream."""
+    """Camera calibration using remote stream with ChArUco board."""
 
     def __init__(self, host: str, port: int,
-                 chessboard_size: Tuple[int, int] = (9, 6),
-                 square_size_mm: float = 25.0):
+                 board_size: Tuple[int, int] = (7, 5),
+                 square_size_mm: float = 40.0,
+                 marker_size_mm: float = 30.0,
+                 dictionary: str = "DICT_4X4_50"):
         self.host = host
         self.port = port
-        self.chessboard_size = chessboard_size  # Inner corners (width, height)
+        self.board_size = board_size  # Number of squares (width, height)
         self.square_size_mm = square_size_mm
+        self.marker_size_mm = marker_size_mm
 
         # Stream
         self.stream_url = f"http://{host}:{port}/stream"
         self.reader = MJPEGReader(self.stream_url)
 
+        # Setup ArUco dictionary and ChArUco board
+        dict_id = getattr(cv2.aruco, dictionary)
+        self.aruco_dict = cv2.aruco.getPredefinedDictionary(dict_id)
+        self.detector_params = cv2.aruco.DetectorParameters()
+        self.aruco_detector = cv2.aruco.ArucoDetector(self.aruco_dict, self.detector_params)
+
+        # Create ChArUco board - IDs start from 0
+        # Markers are on alternating squares (checkerboard pattern)
+        num_markers = (board_size[0] * board_size[1]) // 2
+        # For 7x5: 35//2 = 17 markers (IDs 0-16)
+        ids = np.arange(num_markers, dtype=np.int32)
+        self.charuco_board = cv2.aruco.CharucoBoard(
+            board_size,
+            square_size_mm / 1000.0,  # Convert to meters
+            marker_size_mm / 1000.0,   # Convert to meters
+            self.aruco_dict,
+            ids
+        )
+        self.charuco_detector = cv2.aruco.CharucoDetector(self.charuco_board)
+
         # Calibration data
         self.captured_images: List[np.ndarray] = []
-        self.obj_points: List[np.ndarray] = []  # 3D points
-        self.img_points: List[np.ndarray] = []  # 2D points
+        self.all_charuco_corners: List[np.ndarray] = []
+        self.all_charuco_ids: List[np.ndarray] = []
         self.image_size: Optional[Tuple[int, int]] = None
-
-        # Prepare object points (chessboard corners in 3D)
-        self.objp = np.zeros((chessboard_size[0] * chessboard_size[1], 3), np.float32)
-        self.objp[:, :2] = np.mgrid[0:chessboard_size[0], 0:chessboard_size[1]].T.reshape(-1, 2)
-        self.objp *= square_size_mm / 1000.0  # Convert to meters
 
         # Calibration results
         self.camera_matrix: Optional[np.ndarray] = None
@@ -119,17 +137,18 @@ class RemoteCalibrator:
     def run(self):
         """Run the calibration process."""
         print("\n" + "=" * 60)
-        print("  CAMERA CALIBRATION")
+        print("  CHARUCO CAMERA CALIBRATION")
         print("=" * 60)
         print(f"\nConnecting to camera at {self.host}:{self.port}...")
 
         self.reader.start()
         time.sleep(1)
 
-        print(f"\nChessboard size: {self.chessboard_size[0]}x{self.chessboard_size[1]} inner corners")
+        print(f"\nChArUco board: {self.board_size[0]}x{self.board_size[1]} squares")
         print(f"Square size: {self.square_size_mm} mm")
+        print(f"Marker size: {self.marker_size_mm} mm")
         print("\nInstructions:")
-        print("  1. Hold the chessboard pattern in view of the camera")
+        print("  1. Hold the ChArUco board in view of the camera")
         print("  2. When corners are detected, they appear GREEN")
         print("  3. Press SPACE to capture (need at least 10 captures)")
         print("  4. Move the board to different positions and angles")
@@ -138,6 +157,8 @@ class RemoteCalibrator:
         print()
 
         cv2.namedWindow("Calibration", cv2.WINDOW_NORMAL)
+        current_corners = None
+        current_ids = None
 
         try:
             while True:
@@ -152,22 +173,36 @@ class RemoteCalibrator:
                 display = frame.copy()
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-                # Find chessboard corners
-                flags = cv2.CALIB_CB_ADAPTIVE_THRESH + cv2.CALIB_CB_NORMALIZE_IMAGE
-                found, corners = cv2.findChessboardCorners(gray, self.chessboard_size, flags)
+                # Detect ChArUco board
+                charuco_corners, charuco_ids, marker_corners, marker_ids = \
+                    self.charuco_detector.detectBoard(gray)
+
+                found = charuco_corners is not None and len(charuco_corners) >= 4
 
                 if found:
-                    # Refine corners
-                    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
-                    corners = cv2.cornerSubPix(gray, corners, (11, 11), (-1, -1), criteria)
+                    current_corners = charuco_corners
+                    current_ids = charuco_ids
 
-                    # Draw corners (green = detected)
-                    cv2.drawChessboardCorners(display, self.chessboard_size, corners, found)
-                    cv2.putText(display, "CORNERS DETECTED - Press SPACE to capture",
+                    # Draw detected markers
+                    if marker_corners is not None and len(marker_corners) > 0:
+                        cv2.aruco.drawDetectedMarkers(display, marker_corners, marker_ids)
+
+                    # Draw ChArUco corners
+                    cv2.aruco.drawDetectedCornersCharuco(display, charuco_corners, charuco_ids, (0, 255, 0))
+
+                    cv2.putText(display, f"DETECTED {len(charuco_corners)} corners - Press SPACE to capture",
                                (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
                 else:
-                    cv2.putText(display, "Looking for chessboard...",
-                               (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                    current_corners = None
+                    current_ids = None
+                    # Still draw any detected markers for debugging
+                    if marker_corners is not None and len(marker_corners) > 0:
+                        cv2.aruco.drawDetectedMarkers(display, marker_corners, marker_ids)
+                        cv2.putText(display, f"Found {len(marker_corners)} markers, need ChArUco corners...",
+                                   (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)
+                    else:
+                        cv2.putText(display, "Looking for ChArUco board...",
+                                   (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
                 # Show capture count
                 cv2.putText(display, f"Captured: {len(self.captured_images)}/10 (min)",
@@ -180,12 +215,12 @@ class RemoteCalibrator:
 
                 if key == ord('q'):
                     break
-                elif key == ord(' ') and found:
+                elif key == ord(' ') and found and current_corners is not None:
                     # Capture this frame
                     self.captured_images.append(frame.copy())
-                    self.obj_points.append(self.objp)
-                    self.img_points.append(corners)
-                    print(f"Captured image {len(self.captured_images)}")
+                    self.all_charuco_corners.append(current_corners)
+                    self.all_charuco_ids.append(current_ids)
+                    print(f"Captured image {len(self.captured_images)} ({len(current_corners)} corners)")
                 elif key == ord('c'):
                     if len(self.captured_images) >= 10:
                         self._calibrate()
@@ -198,14 +233,18 @@ class RemoteCalibrator:
             self.reader.stop()
 
     def _calibrate(self):
-        """Perform camera calibration."""
+        """Perform camera calibration using ChArUco."""
         print("\n" + "=" * 40)
-        print("Calibrating...")
+        print("Calibrating with ChArUco...")
         print("=" * 40)
 
-        # Run calibration
-        ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(
-            self.obj_points, self.img_points, self.image_size, None, None
+        # Run ChArUco calibration
+        ret, mtx, dist, rvecs, tvecs = cv2.aruco.calibrateCameraCharuco(
+            self.all_charuco_corners,
+            self.all_charuco_ids,
+            self.charuco_board,
+            self.image_size,
+            None, None
         )
 
         self.camera_matrix = mtx
@@ -240,8 +279,10 @@ class RemoteCalibrator:
             'distortion_coefficients': self.dist_coeffs.flatten().tolist(),
             'reprojection_error': float(self.reprojection_error),
             'num_images': len(self.captured_images),
-            'chessboard_size': list(self.chessboard_size),
-            'square_size_mm': self.square_size_mm
+            'calibration_method': 'charuco',
+            'charuco_board_size': list(self.board_size),
+            'square_size_mm': self.square_size_mm,
+            'marker_size_mm': self.marker_size_mm
         }
 
         with open(output_path, 'w') as f:
@@ -255,33 +296,36 @@ class RemoteCalibrator:
     def _deploy_to_rpi(self, local_path: Path):
         """Deploy calibration file to RPi."""
         try:
-            import paramiko
+            import subprocess
 
             print(f"\nDeploying calibration to RPi...")
 
-            ssh = paramiko.SSHClient()
-            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            ssh.connect(self.host, username='pi', password='raspberry', timeout=10)
+            # Use scp with SSH key (no password needed)
+            remote_path = f'aruconav@{self.host}:/home/aruconav/aruco_drone_nav/config/camera_params.yaml'
+            result = subprocess.run(
+                ['scp', str(local_path), remote_path],
+                capture_output=True, text=True, timeout=30
+            )
 
-            sftp = ssh.open_sftp()
-            remote_path = '/home/pi/aruco_drone_nav/config/camera_params.yaml'
-            sftp.put(str(local_path), remote_path)
-            sftp.close()
-            ssh.close()
-
-            print(f"Deployed to RPi: {remote_path}")
+            if result.returncode == 0:
+                print(f"Deployed to RPi: {remote_path}")
+            else:
+                print(f"Warning: scp failed: {result.stderr}")
+                print(f"Please manually copy {local_path} to RPi")
         except Exception as e:
             print(f"Warning: Could not deploy to RPi: {e}")
             print(f"Please manually copy {local_path} to RPi")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Remote Camera Calibration")
-    parser.add_argument('--host', '-H', default='10.156.64.251', help='Camera server host')
+    parser = argparse.ArgumentParser(description="Remote ChArUco Camera Calibration")
+    parser.add_argument('--host', '-H', default='aruconav.local', help='Camera server host')
     parser.add_argument('--port', '-p', type=int, default=8000, help='Camera server port')
-    parser.add_argument('--width', '-W', type=int, default=9, help='Chessboard width (inner corners)')
-    parser.add_argument('--height', '-L', type=int, default=6, help='Chessboard height (inner corners)')
-    parser.add_argument('--square-size', '-s', type=float, default=25.0, help='Square size in mm')
+    parser.add_argument('--width', '-W', type=int, default=7, help='ChArUco board width (squares)')
+    parser.add_argument('--height', '-L', type=int, default=5, help='ChArUco board height (squares)')
+    parser.add_argument('--square-size', '-s', type=float, default=40.0, help='Square size in mm')
+    parser.add_argument('--marker-size', '-m', type=float, default=30.0, help='Marker size in mm')
+    parser.add_argument('--dict', '-d', default='DICT_4X4_50', help='ArUco dictionary')
     parser.add_argument('-v', '--verbose', action='store_true')
 
     args = parser.parse_args()
@@ -294,8 +338,10 @@ def main():
     calibrator = RemoteCalibrator(
         host=args.host,
         port=args.port,
-        chessboard_size=(args.width, args.height),
-        square_size_mm=args.square_size
+        board_size=(args.width, args.height),
+        square_size_mm=args.square_size,
+        marker_size_mm=args.marker_size,
+        dictionary=args.dict
     )
     calibrator.run()
 

@@ -2,35 +2,50 @@
 
 **Vision-based GPS emulator for indoor drones using ceiling-mounted ArUco markers**
 
-A Python system for Raspberry Pi Zero 2W that detects ArUco markers on the ceiling, calculates world-frame position, and sends `VISION_POSITION_ESTIMATE` to an ArduCopter flight controller via MAVLink. The FC handles all navigation, PID control, missions, and failsafes natively.
+A minimal Python system (~490 lines) for Raspberry Pi Zero 2W that detects ArUco markers on the ceiling, calculates world-frame position, and sends `VISION_POSITION_ESTIMATE` to an ArduCopter flight controller via MAVLink. The FC handles all navigation, PID control, missions, and failsafes natively.
 
-## Architecture
-
-```
-Ceiling-mounted       USB Camera          RPi Zero 2W              Flight Controller
-ArUco Markers    -->  (facing up)    -->  Vision GPS          -->  ArduCopter EKF
-                                          - CLAHE preprocessing    - Position estimation
-                                          - Detect markers         - PID control
-                                          - Estimate position      - Navigation
-                                          - ENU->NED conversion    - Missions & failsafes
-                                          - VISION_POSITION_
-                                            ESTIMATE via MAVLink
-```
+![Ceiling view from RPi camera showing ArUco marker detection](docs/images/detection_live.jpg)
+*Live camera view from RPi Zero 2W - ArUco marker ID 0 on ceiling at ~1.7m distance*
 
 ## Current Performance (RPi Zero 2W)
 
 | Metric | Value |
 |--------|-------|
 | Resolution | 1280x720 (MJPG) |
-| Detection Rate | 95-100% |
-| Processing Time | ~270ms/frame |
-| FPS | ~3.7 |
+| Detection Rate | 99-100% |
+| Processing Time | ~140ms/frame |
+| FPS | ~6 |
+| Marker Type | Single ArUco (DICT_4X4_50) |
 | Marker Size | 18cm (A4 printable) |
 | Working Distance | 1.5-2.5m |
+| Source Code | ~490 lines (2 files) |
 
 ### Timing Breakdown
 ```
-grab:0ms  gray:3ms  CLAHE:20ms  bgr:2ms  detect:250ms  total:275ms
+gray:3ms  CLAHE:20ms  bgr:2ms  detect:110ms  total:135ms
+```
+
+### Sample JSON Output (HTTP stream mode)
+```json
+{
+  "x": 0.549, "y": -0.289, "z": 1.712,
+  "yaw": 159.2, "marker_ids": ["0"], "confidence": 1.0,
+  "detection_rate": 1.0, "uptime": 10.4,
+  "timing": {"gray": "5", "clahe": "21", "detect": "107", "total": "134"}
+}
+```
+
+## Architecture
+
+```
+Ceiling Markers ──► USB Camera ──► RPi Zero 2W ──► Flight Controller
+                    (MJPG 720p)    vision_gps.py    ArduCopter EKF
+                                   - CLAHE preprocess
+                                   - ArUco detection
+                                   - Position estimation
+                                   - ENU->NED convert
+                                   mavlink_bridge.py
+                                   - VISION_POSITION_ESTIMATE
 ```
 
 ## Hardware Requirements
@@ -43,151 +58,69 @@ grab:0ms  gray:3ms  CLAHE:20ms  bgr:2ms  detect:250ms  total:275ms
 
 ## Quick Start
 
-### Desktop Testing (Development Machine)
-
+### 1. Setup
 ```bash
-# Clone and setup
 git clone https://github.com/asdfgh0318/aruco_drone_nav.git
 cd aruco_drone_nav
-python3 -m venv venv
-source venv/bin/activate
 pip install -r requirements.txt
 
-# Generate ArUco markers (A4 size, 18cm)
+# Generate and print ArUco markers (18cm for A4)
 python3 tools/generate_markers.py --ids 0,1,2,3 --size 180 -o markers/
-
-# Print at 100% scale (no fit-to-page)
-
-# Calibrate camera (use ChArUco board)
-python3 tools/calibrate_camera.py --camera 0
-
-# Test marker detection
-python3 tools/test_aruco_detection.py --camera 0
 ```
 
-### Raspberry Pi Deployment
-
+### 2. Deploy to RPi
 ```bash
-# Sync code to RPi
 ./sync_to_rpi.sh
-
-# SSH to RPi
 ssh aruconav@aruconav.local
-
-# Run test mode (prints position to console)
 cd /home/aruconav/aruco_drone_nav
-python3 -m src.main --mode test
-
-# Run stream mode (HTTP server for debug viewer)
-python3 -m src.main --mode stream
 ```
 
-### Debug Viewer (Local Machine)
-
+### 3. Run
 ```bash
-# Start debug viewer (connects to RPi stream)
+# Test mode - prints position to console
+python3 -m src --mode test
+
+# Stream mode - HTTP server for remote monitoring
+python3 -m src --mode stream --port 8001
+
+# Run mode - sends position to flight controller via MAVLink
+python3 -m src --mode run
+```
+
+### 4. Monitor (from local machine)
+```bash
+# Check position via HTTP
+curl http://aruconav.local:8001/position
+
+# Debug viewer with live frames
 python3 tools/debug_viewer.py --host aruconav.local --port 8001
-
-# Press SPACE to capture frames
-# Shows: position, detection rate, timing breakdown
-```
-
-## Running Modes
-
-### Test Mode (no MAVLink, console output)
-```bash
-python3 -m src.main --mode test --config config/system_config.yaml
-```
-
-### Stream Mode (HTTP server for debug viewer)
-```bash
-python3 -m src.main --mode stream --port 8001
-```
-
-### Run Mode (sends VISION_POSITION_ESTIMATE to FC)
-```bash
-python3 -m src.main --mode run --config config/system_config.yaml
-```
-
-## Tools
-
-| Tool | Description | Usage |
-|------|-------------|-------|
-| `debug_viewer.py` | Manual frame capture with timing | `python3 tools/debug_viewer.py` |
-| `generate_markers.py` | Create ArUco marker PDFs | `python3 tools/generate_markers.py --ids 0,1,2` |
-| `calibrate_camera.py` | Local camera calibration | `python3 tools/calibrate_camera.py` |
-| `calibrate_remote.py` | Network-based calibration | `python3 tools/calibrate_remote.py --host rpi` |
-| `camera_server.py` | MJPEG streaming server | `python3 tools/camera_server.py` |
-| `test_aruco_detection.py` | Live detection test | `python3 tools/test_aruco_detection.py` |
-| `test_mavlink.py` | MAVLink connection test | `python3 tools/test_mavlink.py` |
-
-## Configuration
-
-### System Config (`config/system_config.yaml`)
-```yaml
-camera:
-  device_id: 0
-  width: 1280
-  height: 720
-  fps: 30
-  # exposure_time_us: 5000  # Uncomment for manual exposure
-
-aruco:
-  dictionary: "DICT_4X4_50"
-  marker_size_m: 0.18      # 18cm for A4 with margins
-
-control:
-  loop_rate_hz: 20
-```
-
-### Marker Map (`config/marker_map.yaml`)
-```yaml
-markers:
-  - id: 0
-    position: [0.0, 0.0, 3.0]   # X, Y, Z (ceiling height)
-    orientation: 0
-    description: "Origin marker - above takeoff"
-```
-
-## Detection Pipeline
-
-1. **Frame Capture**: Threaded capture from USB camera (MJPG format)
-2. **CLAHE Preprocessing**: Adaptive histogram equalization for varying lighting
-3. **ArUco Detection**: OpenCV ArUco detector with tuned parameters
-4. **Pose Estimation**: solvePnP for 6-DOF marker pose
-5. **Position Estimation**: Transform marker pose to world coordinates
-6. **MAVLink Output**: Send VISION_POSITION_ESTIMATE to FC
-
-### Detection Parameters (tuned for ceiling markers)
-```python
-adaptiveThreshWinSizeMin = 3
-adaptiveThreshWinSizeMax = 23
-adaptiveThreshWinSizeStep = 10
-minMarkerPerimeterRate = 0.01   # Detect distant markers
-cornerRefinementMethod = CORNER_REFINE_CONTOUR
 ```
 
 ## Project Structure
 
 ```
 aruco_drone_nav/
-+-- config/                     # Configuration files
++-- src/                        # Core system (~490 lines)
+|   +-- vision_gps.py           # Camera, detection, position, HTTP server, main loop
+|   +-- mavlink_bridge.py       # MAVLink: connect, send position, set EKF origin
+|   +-- __main__.py             # Entry point (python3 -m src)
++-- config/
 |   +-- system_config.yaml      # Camera, ArUco, control settings
-|   +-- camera_params.yaml      # Camera calibration (720p)
-|   +-- marker_map.yaml         # Marker world positions
-+-- src/                        # Core system
-|   +-- main.py                 # Vision GPS main loop
-|   +-- aruco_detector.py       # Detection + CLAHE + timing
-|   +-- position_estimator.py   # World position calculation
-|   +-- mavlink_interface.py    # MAVLink communication
-|   +-- camera_calibration.py   # Calibration utilities
-+-- tools/                      # Development tools
-|   +-- debug_viewer.py         # Manual frame capture + timing
-|   +-- generate_markers.py     # ArUco PDF generator
-|   +-- calibrate_remote.py     # Network calibration
+|   +-- camera_params.yaml      # Calibrated camera intrinsics
+|   +-- marker_map.yaml         # Marker world positions (ENU)
++-- tools/                      # Development & debug tools
++-- docs/                       # Documentation + images
 +-- markers/                    # Generated marker PDFs
-+-- docs/                       # Documentation
 ```
+
+## Detection Pipeline
+
+1. **Frame Capture** - Threaded USB camera capture (MJPG 720p, buffer=1)
+2. **CLAHE** - Adaptive histogram equalization (clipLimit=2.5, 8x8 tiles)
+3. **ArUco Detection** - `detectMarkers()` with tuned params for ceiling distance
+4. **Pose Estimation** - `solvePnP()` per marker for 6-DOF pose
+5. **Position Calculation** - Camera → Body → World frame transform
+6. **MAVLink Output** - `VISION_POSITION_ESTIMATE` with covariance
 
 ## FC Configuration (ArduCopter)
 
@@ -196,24 +129,31 @@ AHRS_EKF_TYPE = 3      # Use EKF3
 EK3_SRC1_POSXY = 6     # ExternalNav for XY position
 EK3_SRC1_POSZ = 1      # Baro for altitude (safer indoors)
 EK3_SRC1_YAW = 6       # ExternalNav for yaw
-VISO_TYPE = 1          # MAVLink vision
-GPS_TYPE = 0           # Disable GPS (indoor)
-COMPASS_ENABLE = 0     # Disable compass (indoor)
+VISO_TYPE = 1           # MAVLink vision
+GPS_TYPE = 0            # Disable GPS (indoor)
+COMPASS_ENABLE = 0      # Disable compass (indoor)
 ```
 
-See [docs/FC_CONFIG.md](docs/FC_CONFIG.md) for full parameter list.
+See [docs/FC_CONFIG.md](docs/FC_CONFIG.md) for full parameter list and tuning guide.
 
-## Known Issues
+## HTTP API (Stream Mode)
 
-- **OpenCV CORNER_REFINE_CONTOUR crash**: Rare assertion error in OpenCV's contour refinement. Handled gracefully by skipping bad frames.
-- **Processing speed**: ~3.7 FPS on RPi Zero 2W at 1280x720. Consider 640x480 for higher FPS.
+| Endpoint | Response |
+|----------|----------|
+| `GET /position` | JSON with x, y, z, yaw, confidence, timing, detection_rate |
+| `GET /debug-frame` | JPEG image from camera |
 
 ## Documentation
 
 - **[FC_CONFIG.md](docs/FC_CONFIG.md)** - Flight controller configuration
-- **[TECHNICAL.md](docs/TECHNICAL.md)** - Technical details and algorithms
-- **[TESTING.md](docs/TESTING.md)** - Testing guide
-- **[CURRENT_PLAN.md](CURRENT_PLAN.md)** - Project roadmap
+- **[TECHNICAL.md](docs/TECHNICAL.md)** - Algorithms, coordinate frames, timing
+- **[TESTING.md](docs/TESTING.md)** - Testing procedures
+- **[CURRENT_PLAN.md](CURRENT_PLAN.md)** - Project status and roadmap
+
+## Known Issues
+
+- **OpenCV CORNER_REFINE_CONTOUR crash**: Rare assertion error, handled by skipping bad frames
+- **Single-threaded detection**: ArUco detect takes ~110ms, limiting FPS to ~6
 
 ## License
 
@@ -226,4 +166,4 @@ Proprietary - Warsaw University of Technology
 
 ---
 
-*Last updated: 2026-02-04*
+*Last updated: 2026-02-09*

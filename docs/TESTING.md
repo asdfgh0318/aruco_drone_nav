@@ -1,12 +1,12 @@
 # Testing Guide
 
-Complete guide for testing the ArUco Drone Navigation System.
+Complete guide for testing the ArUco Vision GPS system.
 
 ## Table of Contents
 
 1. [Prerequisites](#prerequisites)
-2. [Desktop Testing](#desktop-testing)
-3. [Raspberry Pi Testing](#raspberry-pi-testing)
+2. [RPi Testing](#rpi-testing)
+3. [SITL Testing](#sitl-testing)
 4. [Hardware Testing](#hardware-testing)
 5. [Troubleshooting](#troubleshooting)
 
@@ -14,332 +14,219 @@ Complete guide for testing the ArUco Drone Navigation System.
 
 ## Prerequisites
 
-### Print Test Targets
+### Print Markers
 
-Before any testing, print these files from the `markers/` folder:
+Print ArUco markers from the `markers/` folder:
 
 | File | What it is | Print settings |
 |------|------------|----------------|
-| `markers_DICT_6X6_250.pdf` | ArUco markers (IDs 0-4) | **100% scale**, no fit-to-page |
+| ArUco markers (DICT_4X4_50) | Ceiling navigation markers | **100% scale**, no fit-to-page |
 | `chessboard_9x6.pdf` | Calibration pattern | **100% scale**, no fit-to-page |
 
-**Important:** Measure the printed markers to verify size:
-- ArUco markers should be **20cm × 20cm**
-- Chessboard squares should be **~19mm × 19mm**
+**Verify printed size:**
+- ArUco markers should be **18cm x 18cm** (A4 printable)
+- Chessboard squares should be **~25mm x 25mm**
 
-If sizes don't match, adjust `--marker-size` parameter accordingly.
+### Generate Markers
+
+```bash
+# Generate 18cm markers for A4 paper
+python3 tools/generate_markers.py --ids 0,1,2,3 --size 180 -o markers/
+```
 
 ### Hardware Checklist
 
-- [ ] USB camera (any webcam works for testing)
+- [ ] Raspberry Pi Zero 2W
+- [ ] USB camera (MJPG capable, 720p)
 - [ ] Printed ArUco markers (at least 1)
-- [ ] Printed chessboard pattern
 - [ ] Good lighting (avoid direct sunlight/shadows on markers)
 
 ---
 
-## Desktop Testing
+## RPi Testing
 
-Test everything on your development machine before deploying to RPi.
-
-### Step 1: Setup Environment
+### Step 1: Sync Code to RPi
 
 ```bash
-cd /home/adam-koszalka/ŻYCIE/PRACA/aruco_drone_nav
-
-# Create virtual environment (first time only)
-python3 -m venv venv
-
-# Activate environment
-source venv/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Install tkinter for GUI (system package)
-sudo apt-get install python3-tk
+# From your development machine
+./sync_to_rpi.sh
 ```
 
-### Step 2: Generate Test Targets (if not already done)
+### Step 2: SSH and Run
 
 ```bash
-source venv/bin/activate
+ssh aruconav@aruconav.local
+cd /home/aruconav/aruco_drone_nav
 
-# Generate ArUco markers
-python3 tools/generate_markers.py --ids 0,1,2,3,4 --size 20 --output markers/
+# Test mode - prints position to console
+python3 -m src --mode test
 
-# Generate chessboard
-python3 tools/generate_chessboard.py --width 9 --height 6 --square-size 25 --output markers/
+# Stream mode - HTTP server for remote monitoring
+python3 -m src --mode stream --port 8001
 ```
 
-### Step 3: Camera Calibration
-
-Calibration improves pose estimation accuracy. Do this once per camera.
+### Step 3: Verify Detection
 
 ```bash
-source venv/bin/activate
-python3 tools/calibrate_camera.py --camera 0
+# From your local machine (stream mode must be running)
+curl http://aruconav.local:8001/position
 ```
 
-**Instructions:**
-1. Hold the printed chessboard in front of the camera
-2. Press **SPACE** to capture when corners are detected (green overlay)
-3. Move the chessboard to different angles/distances between captures
-4. Capture **15 images** from various positions
-5. Calibration file saves to `config/camera_params.yaml`
+**Expected output:**
+```json
+{
+  "x": 0.549, "y": -0.289, "z": 1.712,
+  "yaw": 159.2, "marker_ids": ["0"], "confidence": 1.0,
+  "detection_rate": 1.0, "uptime": 10.4,
+  "timing": {"gray": "5", "clahe": "21", "detect": "107", "total": "134"}
+}
+```
 
-**Tips for good calibration:**
-- Cover the entire camera frame
-- Include tilted angles (not just flat)
-- Vary the distance (close and far)
-- Ensure even lighting
-
-### Step 4: ArUco Detection Test
-
-Test that markers are detected correctly.
+### Step 4: Debug Viewer
 
 ```bash
-source venv/bin/activate
-python3 tools/test_aruco_detection.py --camera 0 --marker-size 0.20
+# From your local machine
+python3 tools/debug_viewer.py --host aruconav.local --port 8001
 ```
 
-**What to verify:**
-- [ ] Marker is detected (green border drawn)
-- [ ] Marker ID is correct
-- [ ] Position values change when you move the marker
-- [ ] FPS is reasonable (>15 FPS)
+### What to Verify
 
-**Controls:**
-- `Q` - Quit
-- `S` - Save screenshot
-- `R` - Reset statistics
+- [ ] Camera initializes (MJPG 1280x720)
+- [ ] Markers detected (99-100% detection rate)
+- [ ] Position values are reasonable
+- [ ] Timing: ~140ms/frame, ~6 FPS
+- [ ] HTTP endpoints respond (/position, /debug-frame)
 
-### Step 5: Bench Test (Position + Commands)
+### Current Performance (RPi Zero 2W)
 
-Full test showing position error and velocity commands.
-
-```bash
-source venv/bin/activate
-python3 tools/bench_test.py --camera 0 --marker-size 0.20
-```
-
-**What to verify:**
-- [ ] Position offset shows (Fwd, Right, Alt)
-- [ ] Velocity commands respond to marker movement
-- [ ] Visual velocity indicator works (circle + bar)
-- [ ] Moving marker left → positive Vy command
-- [ ] Moving marker up → positive Vx command
-- [ ] Moving marker closer → negative Vz command
-
-**Understanding the display:**
-```
-┌─────────────────────────────┐
-│ Marker ID: 0                │
-│ Position Offset:            │
-│   Fwd:   +0.150 m          │  ← Marker is 15cm ahead
-│   Right: -0.080 m          │  ← Marker is 8cm to left
-│   Alt:   1.200 m           │  ← Distance to marker
-│   Yaw:   +5.2 deg          │  ← Rotation angle
-│                             │
-│ Velocity Commands:          │
-│   Vx: -0.075 m/s           │  ← Command to move backward
-│   Vy: +0.040 m/s           │  ← Command to move right
-│   Vz: -0.100 m/s           │  ← Command to descend
-└─────────────────────────────┘
-```
-
-### Step 6: GUI Configurator (Optional)
-
-Launch the graphical interface.
-
-```bash
-source venv/bin/activate
-python3 tools/configurator_gui.py
-```
-
-**Features:**
-- Adjust camera/marker settings
-- One-click launch of all test tools
-- Save/load configuration
-- View output logs
+| Metric | Value |
+|--------|-------|
+| Resolution | 1280x720 (MJPG) |
+| Detection Rate | 99-100% |
+| Processing Time | ~140ms/frame |
+| FPS | ~6 |
+| Timing | gray:3ms CLAHE:20ms bgr:2ms detect:110ms |
 
 ---
 
-## Raspberry Pi Testing
+## SITL Testing
 
-### Option A: Standard Raspbian Setup
+Validate the full vision-to-FC MAVLink pipeline without hardware.
 
-For quick testing with full Raspbian OS.
-
-#### On Your PC:
-
-1. Flash **Raspberry Pi OS Lite** using Raspberry Pi Imager
-2. Configure WiFi and enable SSH in the imager
-3. Insert SD card into RPi and boot
-
-#### On the RPi (via SSH):
+### Start SITL
 
 ```bash
-# Connect
-ssh pi@raspberrypi.local
-
-# Run setup script
-curl -sSL https://raw.githubusercontent.com/asdfgh0318/aruco_drone_nav/main/rpi_setup/setup_rpi.sh | sudo bash
-
-# Reboot
-sudo reboot
-
-# After reboot, reconnect and test
-ssh pi@raspberrypi.local
-cd ~/aruco_drone_nav
-source venv/bin/activate
-
-# Test camera
-python3 tools/test_aruco_detection.py --camera 0
+cd /tmp && ~/ardupilot/build/sitl/bin/arducopter \
+    --model + --speedup 1 -I0 \
+    --home 52.2297,21.0122,100,0 \
+    --defaults ~/ardupilot/Tools/autotest/default_params/copter.parm,config/sitl_params.parm
 ```
 
-### Option B: Minimal Buildroot Image
-
-For production-ready minimal system.
-
-#### Build the Image (on your PC):
+### Run Validation
 
 ```bash
-cd buildroot
+# Basic: EKF convergence
+python3 tools/test_sitl.py -v --skip-params
 
-# Install build dependencies
-sudo apt-get install build-essential wget cpio unzip rsync bc libncurses-dev
+# Arm + guided flight
+python3 tools/test_sitl.py -v --skip-params --arm
 
-# Configure WiFi BEFORE building
-nano overlay/etc/wpa_supplicant/wpa_supplicant.conf
-# Add your network:
-# network={
-#     ssid="YourWiFi"
-#     psk="YourPassword"
-# }
-
-# Build (takes 30-60 minutes first time)
-./build.sh
+# Circle pattern
+python3 tools/test_sitl.py -v --skip-params -p circle -d 20
 ```
 
-#### Flash and Boot:
-
-```bash
-# Find SD card device
-lsblk
-
-# Flash (CAREFUL: replace sdX with actual device like sdb)
-sudo dd if=build/buildroot-*/output/images/sdcard.img of=/dev/sdX bs=4M status=progress conv=fsync
-sync
-
-# Eject and insert into RPi
-```
-
-#### Test on Buildroot:
-
-```bash
-# SSH into the system
-ssh root@aruco-drone.local
-# Password: aruco
-
-# Check application status
-/etc/init.d/S99aruco status
-
-# View logs
-cat /var/log/aruco/aruco.log
-
-# Stop auto-start to run manually
-/etc/init.d/S99aruco stop
-
-# Run manually
-cd /opt/aruco
-python3 -m src.main --mode ground_test
-```
+See [SITL Testing Guide](sitl.html) for full details.
 
 ---
 
 ## Hardware Testing
 
-### Camera Test
+### Pre-Flight Checklist
+
+1. [ ] Wire RPi to FC (UART serial, TX->RX, RX->TX, 921600 baud)
+2. [ ] Mount camera facing up on drone frame
+3. [ ] Set FC parameters (see [FC_CONFIG.md](FC_CONFIG.md))
+4. [ ] Mount marker(s) on ceiling above test area
+5. [ ] Measure marker position(s) and update `config/marker_map.yaml`
+
+### Test Sequence
+
+#### 1. Bench Test
+RPi + FC powered on bench, no propellers.
 
 ```bash
-# List available cameras
-v4l2-ctl --list-devices
-
-# Test camera capture
-v4l2-ctl --device=/dev/video0 --stream-mmap --stream-count=10
+# On RPi
+python3 -m src --mode run
 ```
 
-### Serial Port Test (MAVLink)
+**Verify:** VISION_POSITION_ESTIMATE received in MAVLink Inspector.
+
+#### 2. EKF Convergence
+Wait for FC status message: "EKF3 IMU0 origin set"
+
+**Verify:** Position error converges to <0.5m.
+
+#### 3. Ground Test
+Drone on ground under ceiling marker.
+
+**Verify:** Stable position reading, no jumps.
+
+#### 4. Tethered Hover
+Safety tether attached. Take off in Loiter mode.
+
+**Verify:** Position hold is stable, no "toilet bowl" oscillation.
+
+#### 5. Free Hover
+Remove tether. Hover under single marker.
+
+**Verify:** Stable hover at ~6 Hz update rate.
+
+#### 6. Movement Test
+Move between markers (if multiple deployed).
+
+**Verify:** Smooth position transitions.
+
+### What to Watch For
+
+- EKF position error should converge to <0.5m
+- No "toilet bowl" oscillation in Loiter (indicates yaw misalignment)
+- Position should not jump when marker is lost/regained
+- ~6 Hz update rate should be sufficient for stable hover
+
+### Serial Port Test
 
 ```bash
 # Check serial port exists
 ls -la /dev/serial0 /dev/ttyS0 /dev/ttyAMA0
 
-# Simple loopback test (connect TX to RX)
-echo "test" > /dev/serial0 &
-cat /dev/serial0
-```
-
-### MAVLink Connection Test
-
-```bash
-source venv/bin/activate
+# MAVLink connection test
 python3 tools/test_mavlink.py --port /dev/serial0 --baud 921600
 ```
 
-**Without flight controller**, use SITL:
-```bash
-# On another terminal, run ArduCopter SITL
-sim_vehicle.py -v ArduCopter --console
-
-# Then connect
-python3 tools/test_mavlink.py --port udp:127.0.0.1:14550
-```
-
-### Full System Test (Ground Test Mode)
-
-Test everything together without sending actual flight commands.
-
-```bash
-source venv/bin/activate
-python3 -m src.main --mode ground_test --config config/system_config.yaml
-```
-
-**What to verify:**
-- [ ] Camera initializes
-- [ ] Markers are detected
-- [ ] Position is calculated
-- [ ] Velocity commands are computed (displayed, not sent)
-- [ ] No errors in console
-
 ---
 
-## Test Checklist
+## Camera Calibration
 
-### Desktop Tests
-- [ ] Virtual environment created
-- [ ] Dependencies installed
-- [ ] Markers printed and measured
-- [ ] Camera calibration completed
-- [ ] ArUco detection working
-- [ ] Bench test showing correct commands
-- [ ] GUI configurator launches
+Camera calibration improves pose estimation accuracy. Do this once per camera.
 
-### RPi Tests
-- [ ] RPi boots successfully
-- [ ] WiFi connects
-- [ ] SSH access works
-- [ ] Camera detected (`/dev/video0`)
-- [ ] Serial port available (`/dev/serial0`)
-- [ ] ArUco detection works on RPi
-- [ ] Application auto-starts (Buildroot only)
+### Remote Calibration (Recommended)
 
-### Integration Tests
-- [ ] MAVLink connects to FC/SITL
-- [ ] Telemetry received
-- [ ] Ground test mode runs without errors
-- [ ] Watchdog recovers from crash (Buildroot only)
+```bash
+# Start camera server on RPi
+ssh aruconav@aruconav.local
+python3 tools/camera_server.py --port 8000
+
+# Run calibration from local machine
+python3 tools/calibrate_remote.py --host aruconav.local --port 8000
+```
+
+### Local Calibration
+
+```bash
+python3 tools/calibrate_camera.py --camera 0 --output config/camera_params.yaml
+```
+
+See [Calibration Guide](calibration.html) for detailed instructions.
 
 ---
 
@@ -349,92 +236,43 @@ python3 -m src.main --mode ground_test --config config/system_config.yaml
 
 **"No camera found"**
 ```bash
-# Check if camera is detected
 ls /dev/video*
 v4l2-ctl --list-devices
-
-# Check permissions
 sudo usermod -a -G video $USER
-# Logout and login again
 ```
 
 **"Camera busy"**
 ```bash
-# Find process using camera
 fuser /dev/video0
-
-# Kill it
 sudo fuser -k /dev/video0
 ```
-
-**Low FPS**
-- Reduce resolution: `--width 320 --height 240`
-- Check CPU usage: `htop`
-- Close other applications
 
 ### Detection Issues
 
 **Markers not detected**
 - Check lighting (avoid shadows, reflections)
-- Verify marker size parameter matches actual size
-- Try closer/farther distance
+- Verify marker size parameter matches actual size (18cm)
+- Try closer/farther distance (optimal: 1.5-2.5m)
 - Check marker is not damaged/wrinkled
-- Verify correct dictionary (`DICT_6X6_250`)
+- Verify dictionary is DICT_4X4_50
 
-**Wrong position values**
-- Recalibrate camera
-- Verify marker size parameter
-- Check marker is flat (not bent)
+**Low FPS**
+- Expected: ~6 FPS on RPi Zero 2W at 720p
+- Check CPU usage: `htop`
+- Close other applications
 
 ### Serial/MAVLink Issues
 
 **"Permission denied"**
 ```bash
 sudo usermod -a -G dialout $USER
-# Logout and login again
 ```
 
 **"Connection timeout"**
-- Check wiring (TX→RX, RX→TX)
-- Verify baud rate matches FC setting
+- Check wiring (TX->RX, RX->TX)
+- Verify baud rate: 921600
 - Check FC is powered and running
-
-### Buildroot Issues
-
-**Won't boot**
-- Reflash SD card
-- Try different SD card
-- Check power supply (needs stable 5V 2A)
-
-**Application crashes**
-```bash
-# Check logs
-cat /var/log/aruco/aruco.log
-cat /var/log/aruco/error.log
-
-# Check watchdog
-dmesg | grep watchdog
-```
-
-**Need to modify files on read-only system**
-```bash
-# Temporarily make writable
-mount -o remount,rw /
-
-# Make changes...
-
-# Make read-only again
-mount -o remount,ro /
-```
 
 ---
 
-## Next Steps
-
-After successful testing:
-
-1. **Tune PID gains** in `config/system_config.yaml`
-2. **Create marker map** for your ceiling layout
-3. **Test with SITL** before real flight
-4. **Tethered flight test** with safety line
-5. **Free flight test** in safe environment
+*Last updated: 2026-02-09*

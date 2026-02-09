@@ -12,7 +12,6 @@
             <a href="index.html" class="logo">ArUco<span>Nav</span></a>
             <ul>
                 <li><a href="index.html" class="active">Home</a></li>
-                <li><a href="gui-guide.html">Debug GUI</a></li>
                 <li><a href="calibration.html">Calibration</a></li>
                 <li><a href="sitl.html">SITL Testing</a></li>
                 <li><a href="https://github.com/asdfgh0318/aruco_drone_nav">GitHub</a></li>
@@ -27,7 +26,10 @@
 
     <main>
         <h2>Overview</h2>
-        <p>This system enables autonomous indoor drone flight by replacing GPS with ceiling-mounted ArUco markers. A Raspberry Pi Zero 2W detects the markers using CLAHE preprocessing, calculates the drone's world-frame position, and sends <code>VISION_POSITION_ESTIMATE</code> to the flight controller via MAVLink. The FC handles all navigation, PID, missions, and failsafes natively.</p>
+        <p>A minimal Python system (~490 lines) that detects ceiling-mounted ArUco markers, calculates world-frame position, and sends <code>VISION_POSITION_ESTIMATE</code> to an ArduCopter flight controller via MAVLink. The FC handles all navigation, PID control, missions, and failsafes natively.</p>
+
+        <img src="images/detection_live.jpg" alt="Live camera view from RPi Zero 2W showing ArUco marker detection on ceiling" class="screenshot">
+        <p><em>Live camera view from RPi Zero 2W - ArUco marker ID 0 on ceiling at ~1.7m distance</em></p>
 
         <h2>Current Performance (RPi Zero 2W)</h2>
         <table>
@@ -41,15 +43,15 @@
             </tr>
             <tr>
                 <td>Detection Rate</td>
-                <td>95-100%</td>
+                <td>99-100%</td>
             </tr>
             <tr>
                 <td>Processing Time</td>
-                <td>~270ms/frame</td>
+                <td>~140ms/frame</td>
             </tr>
             <tr>
                 <td>FPS</td>
-                <td>~3.7</td>
+                <td>~6</td>
             </tr>
             <tr>
                 <td>Marker Type</td>
@@ -59,10 +61,18 @@
                 <td>Marker Size</td>
                 <td>18cm (A4 printable)</td>
             </tr>
+            <tr>
+                <td>Working Distance</td>
+                <td>1.5-2.5m</td>
+            </tr>
+            <tr>
+                <td>Source Code</td>
+                <td>~490 lines (2 files)</td>
+            </tr>
         </table>
 
         <h3>Timing Breakdown</h3>
-        <pre><code>grab:0ms  gray:3ms  CLAHE:20ms  bgr:2ms  detect:250ms  total:275ms</code></pre>
+        <pre><code>gray:3ms  CLAHE:20ms  bgr:2ms  detect:110ms  total:135ms</code></pre>
 
         <h2>System Architecture</h2>
         <div class="diagram">
@@ -109,7 +119,7 @@
     - tileGridSize=(8,8)
        |
        v
-  cv2.aruco.detectMarkers() (250ms)
+  cv2.aruco.detectMarkers() (110ms)
     - DICT_4X4_50
     - CORNER_REFINE_CONTOUR
        |
@@ -124,13 +134,32 @@
 </pre>
         </div>
 
+        <h2>Source Files</h2>
+        <table>
+            <tr>
+                <th>File</th>
+                <th>Lines</th>
+                <th>Purpose</th>
+            </tr>
+            <tr>
+                <td><code>src/vision_gps.py</code></td>
+                <td>~393</td>
+                <td>Camera, detection, position estimation, HTTP server, main loop</td>
+            </tr>
+            <tr>
+                <td><code>src/mavlink_bridge.py</code></td>
+                <td>~97</td>
+                <td>MAVLink connection, send vision position, set EKF origin</td>
+            </tr>
+            <tr>
+                <td><code>src/__main__.py</code></td>
+                <td>3</td>
+                <td>Entry point (<code>python3 -m src</code>)</td>
+            </tr>
+        </table>
+
         <h2>Documentation</h2>
         <div class="cards">
-            <div class="card">
-                <h3>Debug Viewer</h3>
-                <p>Manual frame capture with timing breakdown for debugging detection issues.</p>
-                <a href="gui-guide.html">Read Guide &rarr;</a>
-            </div>
             <div class="card">
                 <h3>Camera Calibration</h3>
                 <p>Calibrate your camera using ChArUco patterns for accurate pose estimation.</p>
@@ -166,7 +195,7 @@
             </tr>
             <tr>
                 <td><code>debug_viewer.py</code></td>
-                <td><strong>Manual frame capture</strong> with timing breakdown (grab/gray/CLAHE/detect)</td>
+                <td>Remote frame capture with timing breakdown from HTTP stream</td>
             </tr>
             <tr>
                 <td><code>test_sitl.py</code></td>
@@ -187,18 +216,6 @@
             <tr>
                 <td><code>calibrate_camera.py</code></td>
                 <td>Local camera intrinsic calibration</td>
-            </tr>
-            <tr>
-                <td><code>test_aruco_detection.py</code></td>
-                <td>Live marker detection test</td>
-            </tr>
-            <tr>
-                <td><code>test_mavlink.py</code></td>
-                <td>MAVLink connection test</td>
-            </tr>
-            <tr>
-                <td><code>generate_charuco.py</code></td>
-                <td>Create ChArUco calibration boards</td>
             </tr>
         </table>
 
@@ -249,58 +266,42 @@ ssh aruconav@aruconav.local
 
 # Run stream mode (HTTP server)
 cd /home/aruconav/aruco_drone_nav
-python3 -m src.main --mode stream</code></pre>
+python3 -m src --mode stream --port 8001</code></pre>
 
-        <h3>3. Debug Viewer (Local Machine)</h3>
-        <pre><code># Capture frames with timing
-python3 tools/debug_viewer.py --host aruconav.local --port 8001
+        <h3>3. Monitor (Local Machine)</h3>
+        <pre><code># Check position via HTTP
+curl http://aruconav.local:8001/position
 
-# Press SPACE to capture, shows:
-# - Position, detection rate
-# - Timing: grab/gray/CLAHE/bgr/detect/total</code></pre>
+# Debug viewer with live frames
+python3 tools/debug_viewer.py --host aruconav.local --port 8001</code></pre>
 
         <h3>4. Run Vision GPS</h3>
         <pre><code># Test mode (console output, no MAVLink)
-python3 -m src.main --mode test
+python3 -m src --mode test
 
-# Run mode (sends to FC)
-python3 -m src.main --mode run</code></pre>
+# Run mode (sends to FC via MAVLink)
+python3 -m src --mode run</code></pre>
 
-        <h2>Key Features</h2>
+        <h3>Sample JSON Output</h3>
+        <pre><code>{
+  "x": 0.549, "y": -0.289, "z": 1.712,
+  "yaw": 159.2, "marker_ids": ["0"], "confidence": 1.0,
+  "detection_rate": 1.0, "uptime": 10.4,
+  "timing": {"gray": "5", "clahe": "21", "detect": "107", "total": "134"}
+}</code></pre>
+
+        <h2>FC Configuration (ArduCopter)</h2>
         <table>
-            <tr>
-                <th>Feature</th>
-                <th>Description</th>
-            </tr>
-            <tr>
-                <td>CLAHE Preprocessing</td>
-                <td>Adaptive histogram equalization for robust detection in varying lighting</td>
-            </tr>
-            <tr>
-                <td>Vision GPS Emulation</td>
-                <td>Replaces GPS with ceiling-mounted ArUco markers for indoor flight</td>
-            </tr>
-            <tr>
-                <td>Timing Instrumentation</td>
-                <td>Detailed breakdown of processing time (grab/gray/CLAHE/detect)</td>
-            </tr>
-            <tr>
-                <td>6-DOF Pose Estimation</td>
-                <td>Full position and orientation via solvePnP with calibrated camera</td>
-            </tr>
-            <tr>
-                <td>EKF3 Integration</td>
-                <td>FC uses vision data as primary position source via ExternalNav</td>
-            </tr>
-            <tr>
-                <td>SITL Validated</td>
-                <td>Full pipeline tested: arm, takeoff, hover, land, circle pattern</td>
-            </tr>
-            <tr>
-                <td>HTTP Streaming</td>
-                <td>Position + timing data via JSON endpoint for remote debugging</td>
-            </tr>
+            <tr><th>Parameter</th><th>Value</th><th>Purpose</th></tr>
+            <tr><td><code>AHRS_EKF_TYPE</code></td><td>3</td><td>Use EKF3</td></tr>
+            <tr><td><code>EK3_SRC1_POSXY</code></td><td>6</td><td>ExternalNav for XY position</td></tr>
+            <tr><td><code>EK3_SRC1_POSZ</code></td><td>1</td><td>Baro for altitude (safer indoors)</td></tr>
+            <tr><td><code>EK3_SRC1_YAW</code></td><td>6</td><td>ExternalNav for yaw</td></tr>
+            <tr><td><code>VISO_TYPE</code></td><td>1</td><td>MAVLink vision input</td></tr>
+            <tr><td><code>GPS_TYPE</code></td><td>0</td><td>Disable GPS (indoor)</td></tr>
+            <tr><td><code>COMPASS_ENABLE</code></td><td>0</td><td>Disable compass (indoor)</td></tr>
         </table>
+        <p>See <a href="FC_CONFIG.md">FC_CONFIG.md</a> for full parameter list and tuning guide.</p>
 
         <h2>Hardware Requirements</h2>
         <ul>
@@ -312,18 +313,18 @@ python3 -m src.main --mode run</code></pre>
         </ul>
 
         <div class="note">
-            <strong>Note:</strong> The system achieves 95-100% detection rate at ~3.7 FPS on RPi Zero 2W at 1280x720. CLAHE preprocessing provides robust detection in varying lighting conditions.
+            <strong>Status:</strong> Vision system tested on RPi Zero 2W with 99-100% detection at ~6 FPS. Next step: real drone hardware testing.
         </div>
 
         <h2>Project Status</h2>
-        <p>Current version: <strong>1.2</strong> (2026-02-04)</p>
+        <p>Current version: <strong>2.0</strong> (2026-02-09)</p>
         <ul>
-            <li>Single ArUco markers with CLAHE preprocessing</li>
-            <li>95-100% detection rate achieved</li>
-            <li>Timing instrumentation for performance analysis</li>
-            <li>HTTP streaming with debug viewer</li>
-            <li>SITL: Full pipeline validated</li>
-            <li>Next: FPS optimization (3.7 → 10+ FPS)</li>
+            <li>Codebase minimized from 3,329 to ~490 lines</li>
+            <li>99-100% detection rate at ~6 FPS (~140ms/frame)</li>
+            <li>CLAHE preprocessing for robust lighting adaptation</li>
+            <li>HTTP streaming with JSON position + JPEG debug frames</li>
+            <li>SITL: Full pipeline validated (arm, takeoff, hover, land, circle)</li>
+            <li>Next: Real drone hardware testing</li>
         </ul>
     </main>
 

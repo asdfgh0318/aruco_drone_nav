@@ -314,14 +314,14 @@ def main():
     parser.add_argument(
         '--width', '-W',
         type=int,
-        default=640,
-        help='Frame width (default: 640)'
+        default=2592,
+        help='Frame width (default: 2592 for OV5693 5MP)'
     )
     parser.add_argument(
         '--height', '-H',
         type=int,
-        default=480,
-        help='Frame height (default: 480)'
+        default=1944,
+        help='Frame height (default: 1944 for OV5693 5MP)'
     )
     parser.add_argument(
         '--fps', '-f',
