@@ -1,5 +1,6 @@
 """ArUco Vision GPS - detects ceiling markers and sends position to flight controller."""
 
+import math
 import time
 import signal
 import sys
@@ -17,18 +18,30 @@ import yaml
 
 log = logging.getLogger(__name__)
 
-Detection = namedtuple("Detection", "marker_id rvec tvec distance timestamp")
+Detection = namedtuple("Detection", "marker_id rvec tvec distance timestamp centroid")
 DroneState = namedtuple("DroneState", "x y z yaw marker_ids confidence timestamp")
 
 # --- Config loaders ---
 
-def load_camera_params(path):
+def load_camera_params(path, target_width=None, target_height=None):
     with open(path) as f:
         data = yaml.safe_load(f)
     cm = data["camera_matrix"]
     matrix = np.array(cm["data"] if isinstance(cm, dict) and "data" in cm else cm).reshape(3, 3)
     dc = data["distortion_coefficients"]
     coeffs = np.array(dc["data"] if isinstance(dc, dict) and "data" in dc else dc)
+    # Scale camera matrix if running at different resolution than calibration
+    cal_w = data.get("image_width", target_width)
+    cal_h = data.get("image_height", target_height)
+    if target_width and target_height and cal_w and cal_h:
+        sx = target_width / cal_w
+        sy = target_height / cal_h
+        if abs(sx - 1.0) > 0.01 or abs(sy - 1.0) > 0.01:
+            matrix[0, 0] *= sx  # fx
+            matrix[0, 2] *= sx  # cx
+            matrix[1, 1] *= sy  # fy
+            matrix[1, 2] *= sy  # cy
+            log.info(f"Scaled camera matrix from {cal_w}x{cal_h} to {target_width}x{target_height}")
     return matrix, coeffs
 
 
@@ -110,6 +123,16 @@ def create_detector(dictionary="DICT_4X4_50"):
     return cv2.aruco.ArucoDetector(aruco_dict, params)
 
 
+# Persistent PnP state for temporal consistency (per marker ID)
+_last_pnp = {}  # marker_id -> (rvec, tvec)
+
+# Base pose: camera facing up at ceiling marker (~3m away)
+# Marker Z points out of face (down from ceiling), camera Z points up
+# So base rotation is ~180° around X: marker appears flipped
+_BASE_RVEC = np.array([[math.pi], [0.0], [0.0]], dtype=np.float64)
+_BASE_TVEC = np.array([[0.0], [0.0], [3.0]], dtype=np.float64)
+
+
 def detect(frame, clahe, detector, cam_matrix, dist_coeffs, marker_size):
     t0 = time.perf_counter()
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -143,16 +166,40 @@ def detect(frame, clahe, detector, cam_matrix, dist_coeffs, marker_size):
     ts = time.time()
     detections = []
     for i, mid in enumerate(ids.flatten()):
-        ok, rvec, tvec = cv2.solvePnP(obj_pts, corners[i].reshape(-1, 2), cam_matrix, dist_coeffs)
+        corners_2d = corners[i].reshape(-1, 2)
+        mid_int = int(mid)
+
+        # Use previous frame's solution as initial guess (temporal consistency)
+        # This keeps solvePnP near the correct solution frame-to-frame
+        prev = _last_pnp.get(mid_int)
+        if prev is not None:
+            # Temporal consistency: start from previous frame's solution
+            rvec_init, tvec_init = prev
+            ok, rvec, tvec = cv2.solvePnP(
+                obj_pts, corners_2d, cam_matrix, dist_coeffs,
+                rvec=rvec_init.copy(), tvec=tvec_init.copy(),
+                useExtrinsicGuess=True,
+                flags=cv2.SOLVEPNP_ITERATIVE)
+        else:
+            # First detection: use IPPE_SQUARE (no initial guess needed)
+            ok, rvec, tvec = cv2.solvePnP(
+                obj_pts, corners_2d, cam_matrix, dist_coeffs,
+                flags=cv2.SOLVEPNP_IPPE_SQUARE)
+
         if ok:
-            tvec = tvec.flatten()
-            detections.append(Detection(int(mid), rvec.flatten(), tvec, float(np.linalg.norm(tvec)), ts))
+            _last_pnp[mid_int] = (rvec.copy(), tvec.copy())
+            tvec_flat = tvec.flatten()
+            centroid = corners_2d.mean(axis=0)
+            detections.append(Detection(
+                mid_int, rvec.flatten(), tvec_flat,
+                float(np.linalg.norm(tvec_flat)), ts, centroid))
+
     return detections, timing
 
 # --- Position estimation ---
 
-CAM_TO_BODY = np.array([[0, 1, 0], [1, 0, 0], [0, 0, -1]], dtype=float)
-BODY_TO_WORLD_BASE = np.array([[0, 1, 0], [1, 0, 0], [0, 0, -1]], dtype=float)
+CAM_TO_BODY = np.array([[0, 1, 0], [1, 0, 0], [0, 0, 1]], dtype=float)
+BODY_TO_WORLD_BASE = np.array([[0, 1, 0], [1, 0, 0], [0, 0, 1]], dtype=float)
 
 
 def euler_from_rvec(rvec):
@@ -165,32 +212,52 @@ def euler_from_rvec(rvec):
     return np.degrees(yaw)
 
 
-def estimate_single(detection, marker_cfg):
+def estimate_single(detection, marker_cfg, imu_attitude=None):
     marker_in_body = CAM_TO_BODY @ detection.tvec
+
     yaw_camera = euler_from_rvec(detection.rvec)
     drone_yaw = -yaw_camera + marker_cfg["orientation"]
-    yaw_rad = np.radians(drone_yaw)
-    c, s = np.cos(yaw_rad), np.sin(yaw_rad)
-    yaw_rot = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
-    b2w = yaw_rot @ BODY_TO_WORLD_BASE
+
+    if imu_attitude is not None:
+        # Full body-to-world rotation using IMU roll/pitch/yaw
+        roll, pitch, imu_yaw = imu_attitude
+        # Use IMU yaw (more stable than vision yaw at distance)
+        drone_yaw = np.degrees(imu_yaw)
+        # Build R_world_body = Rz(yaw) @ Ry(pitch) @ Rx(roll)
+        cr, sr = math.cos(roll), math.sin(roll)
+        cp, sp = math.cos(pitch), math.sin(pitch)
+        cy, sy = math.cos(imu_yaw), math.sin(imu_yaw)
+        # ZYX Euler rotation matrix
+        b2w = np.array([
+            [cy*cp,  cy*sp*sr - sy*cr,  cy*sp*cr + sy*sr],
+            [sy*cp,  sy*sp*sr + cy*cr,  sy*sp*cr - cy*sr],
+            [-sp,    cp*sr,             cp*cr],
+        ])
+    else:
+        # No IMU - assume level, use vision yaw only
+        yaw_rad = np.radians(drone_yaw)
+        c, s = np.cos(yaw_rad), np.sin(yaw_rad)
+        yaw_rot = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
+        b2w = yaw_rot @ BODY_TO_WORLD_BASE
+
     pos = marker_cfg["position"] - b2w @ marker_in_body
     return pos, drone_yaw
 
 
-def estimate_position(detections, marker_map, last_state, alpha=0.7):
+def estimate_position(detections, marker_map, last_state, cam_matrix, alpha=0.3, imu_attitude=None):
     valid = [(d, marker_map[str(d.marker_id)]) for d in detections if str(d.marker_id) in marker_map]
     if not valid:
         return last_state
 
     if len(valid) == 1:
         d, cfg = valid[0]
-        pos, yaw = estimate_single(d, cfg)
+        pos, yaw = estimate_single(d, cfg, imu_attitude)
         ids = [str(d.marker_id)]
         conf = 1.0
     else:
         positions, yaws, weights, ids = [], [], [], []
         for d, cfg in valid:
-            pos, yaw = estimate_single(d, cfg)
+            pos, yaw = estimate_single(d, cfg, imu_attitude)
             w = 1.0 / (d.distance + 0.1)
             positions.append(pos * w)
             yaws.append((yaw, w))
@@ -303,7 +370,10 @@ def main():
         cfg = yaml.safe_load(f)
     config_dir = config_path.parent
 
-    cam_matrix, dist_coeffs = load_camera_params(config_dir / "camera_params.yaml")
+    cam_w = cfg.get("camera", {}).get("width", 1280)
+    cam_h = cfg.get("camera", {}).get("height", 720)
+    cam_matrix, dist_coeffs = load_camera_params(
+        config_dir / "camera_params.yaml", target_width=cam_w, target_height=cam_h)
     marker_map = load_marker_map(config_dir / "marker_map.yaml")
     aruco_cfg = cfg.get("aruco", {})
     marker_size = aruco_cfg.get("marker_size_m", 0.18)
@@ -339,14 +409,19 @@ def main():
         else:
             mavlink.set_ekf_origin(origin_lat, origin_lon, origin_alt)
 
-    server = None
-    if args.mode == "stream":
-        server = PositionServer(port=args.port)
-        server.start()
+    server = PositionServer(port=args.port)
+    server.start()
 
     shutdown = [False]
     signal.signal(signal.SIGINT, lambda *_: shutdown.__setitem__(0, True))
     signal.signal(signal.SIGTERM, lambda *_: shutdown.__setitem__(0, True))
+
+    # CSV log for debugging position estimation
+    csv_path = Path(__file__).parent.parent / "debug_log.csv"
+    csv_file = open(csv_path, "w")
+    csv_file.write("frame,time,marker_id,cx,cy,tvec_x,tvec_y,tvec_z,"
+                   "rvec_x,rvec_y,rvec_z,pos_x,pos_y,pos_z,yaw,imu_roll,imu_pitch,imu_yaw\n")
+    log.info(f"Debug CSV: {csv_path}")
 
     log.info(f"Running Vision GPS ({args.mode} mode)")
     frames, detections_count, last_state = 0, 0, None
@@ -365,8 +440,20 @@ def main():
 
             if dets:
                 detections_count += 1
-                state = estimate_position(dets, marker_map, last_state)
+                imu = mavlink.attitude if mavlink else None
+                state = estimate_position(dets, marker_map, last_state, cam_matrix, imu_attitude=imu)
                 last_state = state
+                # Log raw data
+                for d in dets:
+                    ir = f"{imu[0]:.4f},{imu[1]:.4f},{imu[2]:.4f}" if imu else ",,"
+                    csv_file.write(
+                        f"{frames},{time.time():.3f},{d.marker_id},"
+                        f"{d.centroid[0]:.1f},{d.centroid[1]:.1f},"
+                        f"{d.tvec[0]:.4f},{d.tvec[1]:.4f},{d.tvec[2]:.4f},"
+                        f"{d.rvec[0]:.4f},{d.rvec[1]:.4f},{d.rvec[2]:.4f},"
+                        f"{state.x:.4f},{state.y:.4f},{state.z:.4f},{state.yaw:.2f},"
+                        f"{ir}\n")
+                    csv_file.flush()
 
             if args.mode == "run" and state and mavlink:
                 if gps_mode:
@@ -380,26 +467,29 @@ def main():
                         x=state.y, y=state.x, z=-state.z,  # ENU -> NED
                         yaw=np.radians(state.yaw), confidence=state.confidence)
 
-            if args.mode == "test":
-                if state:
-                    print(f"\rPos: ({state.x:+.2f}, {state.y:+.2f}, {state.z:.2f})m | "
-                          f"Yaw: {state.yaw:+.1f}° | Markers: {state.marker_ids} | "
-                          f"Conf: {state.confidence:.2f}", end="")
+            if args.mode in ("test", "run"):
+                if dets:
+                    d = dets[0]
+                    t = d.tvec
+                    print(f"\rtvec:({t[0]:+.2f},{t[1]:+.2f},{t[2]:+.2f}) ", end="")
+                    if state:
+                        print(f"pos:({state.x:+.2f},{state.y:+.2f},{state.z:.2f}) "
+                              f"yaw:{state.yaw:+.1f} conf:{state.confidence:.2f}", end="  ")
                 else:
-                    print("\rNo markers detected" + " " * 40, end="")
+                    print("\rNo markers" + " " * 60, end="")
 
-            if args.mode == "stream" and server:
-                server.update(state, frames, detections_count, frame, timing)
+            server.update(state, frames, detections_count, frame, timing)
 
             elapsed = time.time() - t_start
             if elapsed < loop_period:
                 time.sleep(loop_period - elapsed)
     finally:
+        csv_file.close()
+        log.info(f"Debug log saved to {csv_path}")
         camera.stop()
         if mavlink:
             mavlink.disconnect()
-        if server:
-            server.stop()
+        server.stop()
         rate = detections_count / max(1, frames)
         log.info(f"Done: {frames} frames, {detections_count} detections ({rate:.0%})")
 

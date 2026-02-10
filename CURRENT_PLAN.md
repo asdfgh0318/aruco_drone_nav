@@ -3,85 +3,93 @@
 ## Architecture
 RPi + Camera = Visual GPS emulator. Detects markers, calculates position, sends to FC. FC handles everything else.
 
-## Current Status (2026-02-09)
+## Current Status (2026-02-10)
 
-### Codebase: Minimal & Working
-Rewrote entire src/ from 3,329 lines to ~490 lines. Tested on RPi Zero 2W with live marker detection.
+### System: End-to-End Working
+GPS emulation confirmed working with custom firmware. IMU fusion integrated. Ready for flight testing.
 
 ### Performance on RPi Zero 2W
 | Metric | Value |
 |--------|-------|
 | Resolution | 1280x720 (MJPG) |
-| Detection Rate | 99-100% |
-| Processing Time | ~140ms/frame |
-| FPS | ~6 |
+| Detection Rate | 95% |
+| Processing Time | ~133ms/frame |
+| FPS | ~7.5 |
+| Stationary Precision | 3-9mm XY, 1-3mm Z |
 | Marker Type | Single ArUco (DICT_4X4_50) |
 | Marker Size | 18cm (A4 printable) |
-| Source Lines | ~490 (2 files) |
 
-### Timing Breakdown
-```
-gray:3ms  CLAHE:20ms  bgr:2ms  detect:110ms  total:135ms
-```
+### Custom Firmware
+SpeedyBee F405 V3 stock firmware has AP_GPS_MAV and HAL_VISUALODOM compiled out.
+Custom build via custom.ardupilot.org with:
+- AP_GPS_MAV_ENABLED=1
+- HAL_VISUALODOM_ENABLED=1
+- EK3_FEATURE_EXTERNAL_NAV=1
+- AP_MOTORS_FRAME_QUAD_ENABLED=1
+
+GPS_INPUT confirmed: fix=3, sats=12, correct lat/lon.
 
 ## Completed
 
 ### Vision System
 - [x] ArUco marker detection (DICT_4X4_50)
 - [x] CLAHE preprocessing for robust detection
-- [x] 6-DOF pose estimation (solvePnP)
-- [x] Camera calibration (720p, 0.14 reprojection error)
-- [x] Corner refinement (CORNER_REFINE_CONTOUR with crash handling)
+- [x] 6-DOF pose estimation (solvePnP with temporal consistency)
+- [x] Camera calibration (640x480, auto-scaled to 1280x720)
+- [x] Corner refinement (CORNER_REFINE_CONTOUR)
 - [x] Timing instrumentation
-- [x] **Codebase minimization** (3,329 -> ~490 lines)
+- [x] Codebase minimization (3,329 -> ~500 lines)
 
-### Position Calculation
-- [x] Camera -> Body -> World coordinate transform
+### Position Estimation
+- [x] Camera -> Body -> World coordinate transform (upward-facing camera)
+- [x] IMU fusion: ZYX Euler body-to-world rotation from ATTITUDE messages
 - [x] Multi-marker weighted fusion
-- [x] Low-pass position filtering (alpha=0.7)
+- [x] Low-pass position filtering (alpha=0.3)
+- [x] Debug CSV logging (always on)
 
 ### GPS Emulation (MAVLink)
-- [x] VISION_POSITION_ESTIMATE to FC
-- [x] Heading/yaw forwarding
-- [x] Confidence-to-covariance mapping
-- [x] ENU->NED conversion
-- [x] SET_GPS_GLOBAL_ORIGIN for non-GPS arming
+- [x] GPS_INPUT to FC (GPS emulation mode)
+- [x] VISION_POSITION_ESTIMATE to FC (vision mode)
+- [x] Custom firmware with AP_GPS_MAV + VISUALODOM enabled
+- [x] Heartbeat handshake (send before waiting)
+- [x] Pyserial PL011 workaround
 
 ### Infrastructure
 - [x] RPi Zero 2W deployment
 - [x] HTTP position server (JSON + debug JPEG)
-- [x] SITL validation (basic, guided flight, circle pattern)
+- [x] RPi wired to FC via UART (115200 baud)
 
-## Next: Real Drone Testing
+## Next: Flight Testing
 
 ### Pre-Flight Checklist
-1. [ ] Wire RPi to FC (see docs/WIRING.md - SpeedyBee F405 V3)
+1. [x] Wire RPi to FC
 2. [x] Mount camera facing up on drone frame
-3. [ ] Set FC parameters via Mission Planner (see docs/FC_CONFIG.md)
-4. [x] Mount marker(s) on ceiling above test area
-5. [ ] Measure marker position(s) and update marker_map.yaml
+3. [x] Flash custom firmware
+4. [x] Set FC parameters (GPS_TYPE=14)
+5. [x] Mount marker(s) on ceiling above test area
+6. [ ] Measure marker position(s) and update marker_map.yaml
 
 ### Test Sequence
-1. [ ] **Bench test** - RPi + FC powered on bench, verify VISION_POSITION_ESTIMATE received
-2. [ ] **EKF convergence** - Verify FC EKF accepts vision data (check MAVLink Inspector)
-3. [ ] **Ground test** - Drone on ground, verify position reading is stable
-4. [ ] **Tethered hover** - Safety tether, take off in Loiter mode, verify position hold
-5. [ ] **Free hover** - Remove tether, hover test under single marker
-6. [ ] **Movement test** - Move between markers (if multiple deployed)
+1. [x] **Bench test** - RPi + FC on bench, GPS_INPUT confirmed working
+2. [ ] **EKF convergence** - Verify FC EKF accepts GPS data
+3. [ ] **Ground test** - Drone on ground under marker, verify stable position
+4. [ ] **Tethered hover** - Safety tether, Loiter mode, verify position hold
+5. [ ] **Free hover** - Remove tether, hover under single marker
 
-### What to Watch For
-- EKF position error should converge to <0.5m
-- No "toilet bowl" oscillation in Loiter (indicates yaw misalignment)
-- Position should not jump when marker is lost/regained
-- ~6 Hz update rate should be sufficient for stable hover
+## Future Improvements
+1. IMU update rate (currently ~4Hz, should match camera ~7.5Hz)
+2. FPS optimization (target 10+ FPS)
+3. Camera focus lock in startup code
+4. Recalibrate camera at 1280x720
+5. Multi-marker deployment for larger area
 
 ## File Structure
 ```
-src/vision_gps.py      (~393 lines) - Camera, detection, position, HTTP server, main loop
-src/mavlink_bridge.py  (~97 lines)  - MAVLink connection + send vision position
+src/vision_gps.py      (~500 lines) - Camera, detection, position, HTTP server, main loop
+src/mavlink_bridge.py  (~183 lines) - MAVLink connection + GPS emulation + vision position
 src/__main__.py        (3 lines)    - Entry point
 ```
 
 ---
 
-*Last updated: 2026-02-09*
+*Last updated: 2026-02-10*

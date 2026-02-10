@@ -19,6 +19,7 @@ class MAVLinkBridge:
         self._running = False
         self._thread = None
         self._last_heartbeat = 0.0
+        self.attitude = None  # (roll, pitch, yaw) in radians
 
     def connect(self, timeout=10.0):
         try:
@@ -48,7 +49,15 @@ class MAVLinkBridge:
                 time.sleep(0.3)
 
             log.info("Waiting for FC heartbeat...")
-            msg = self.conn.wait_heartbeat(timeout=timeout)
+            deadline = time.time() + timeout
+            msg = None
+            while time.time() < deadline:
+                m = self.conn.recv_match(type='HEARTBEAT', blocking=True, timeout=1.0)
+                if m and m.get_srcSystem() != 255:  # Ignore our own heartbeats
+                    msg = m
+                    break
+                # Keep sending heartbeats while waiting
+                self._send_heartbeat()
             if msg is None:
                 log.error("No heartbeat received")
                 return False
@@ -92,8 +101,12 @@ class MAVLinkBridge:
                     self._send_heartbeat()
                     last_hb_sent = now
                 msg = self.conn.recv_match(blocking=True, timeout=0.1)
-                if msg and msg.get_type() == "HEARTBEAT":
-                    self._last_heartbeat = time.time()
+                if msg:
+                    mtype = msg.get_type()
+                    if mtype == "HEARTBEAT" and msg.get_srcSystem() != 255:
+                        self._last_heartbeat = time.time()
+                    elif mtype == "ATTITUDE":
+                        self.attitude = (msg.roll, msg.pitch, msg.yaw)
             except Exception:
                 pass
 
