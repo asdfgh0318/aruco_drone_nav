@@ -1,40 +1,45 @@
 # Project TODO List
 
-## Priority: Critical - Flight Testing
+## Priority: Critical
 
-### Test Sequence
+### Immediate Next Steps
+- [ ] **Recalibrate camera at 1280x720** — non-uniform scaling causes yaw-position coupling
+- [ ] **Set FC params for VISO** — VISO_TYPE=1, EK3_SRC1_POSXY/Z/YAW=6, COMPASS_USE=0, GPS_TYPE=0
+- [ ] **Investigate althold crash** — first flight test (2026-02-11) ended in crash
+
+### Flight Test Sequence
 - [x] **Bench test** - RPi + FC on bench, GPS_INPUT confirmed (fix=3, sats=12)
-- [ ] **EKF convergence** - Verify FC EKF accepts GPS data, position error <0.5m
+- [ ] **EKF convergence** - Verify FC EKF accepts vision data
 - [ ] **Ground test** - Drone on ground under marker, verify stable position reading
 - [ ] **Tethered hover** - Safety tether, Loiter mode, verify position hold
 - [ ] **Free hover** - Remove tether, hover under single marker
-- [ ] **Movement test** - Move between markers (if multiple deployed)
 
 ## Priority: Medium
 
-### IMU Integration
-- [x] **IMU fusion** - ZYX Euler body-to-world rotation from ATTITUDE messages
-- [ ] **IMU update rate** - Currently ~4Hz vs camera 7.5Hz, causes yaw-position coupling
-- [ ] **Static bias compensation** - Roll ~-4.7°, pitch ~-6.9° offset when level
-
 ### Performance
-- [ ] **FPS optimization** - Currently ~7.5 FPS, target 10+
-  - Reduce resolution to 640x480
+- [ ] **FPS optimization at 1280x720** — currently ~3.7 FPS, target 10+
   - Conditional CLAHE (skip when detection succeeds)
   - Detection parameter tuning
+  - ROI-based detection near last marker position
 
 ### Robustness
 - [ ] **Camera focus lock** - Add to Camera.start() so autofocus is disabled automatically
 - [ ] **Clean shutdown** - Fix OpenCV error on camera thread cleanup
-- [ ] **Recalibrate camera at 1280x720** - Currently scaling from 640x480
 
 ### Coverage
 - [ ] **Multi-marker deployment** - Multiple ceiling markers for larger area
 
-## Priority: Low
-- [ ] **ROI-based detection** - Search near last marker position first
-
 ## Completed
+
+### Session 2026-02-11: Position Fix + VISO Migration + Terminal Map
+- [x] Position formula fixed: correct solvePnP inverse (`-R^T @ tvec`)
+- [x] Vision yaw from full rotation chain (`R_bw = R_mw @ R_cm^T @ R_CB^T`)
+- [x] Position is now IMU-independent (solvePnP + marker pose only)
+- [x] Visual odometry migration (code side): VISION_POSITION_ESTIMATE with auto EKF origin
+- [x] Terminal mini map tool (`tools/terminal_map.py`) — curses, works over SSH
+- [x] 640x480 resolution test: ~20 FPS, ~22mm XY precision
+- [x] Confirmed yaw-position coupling from non-uniform camera matrix scaling
+- [x] First althold flight test (crashed)
 
 ### Session 2026-02-10: GPS Emulation + IMU Fusion
 - [x] Custom firmware build (AP_GPS_MAV, VISUALODOM, EK3_EXTERNAL_NAV)
@@ -68,4 +73,4 @@
 
 ---
 
-*Last updated: 2026-02-10*
+*Last updated: 2026-02-11*

@@ -20,6 +20,8 @@ class MAVLinkBridge:
         self._thread = None
         self._last_heartbeat = 0.0
         self.attitude = None  # (roll, pitch, yaw) in radians
+        self._origin = None   # (lat, lon, alt) for EKF origin
+        self._origin_set = False
 
     def connect(self, timeout=10.0):
         try:
@@ -114,9 +116,16 @@ class MAVLinkBridge:
     def is_connected(self):
         return self.conn is not None and (time.time() - self._last_heartbeat) < 3.0
 
+    def configure_origin(self, lat, lon, alt):
+        """Store EKF origin coordinates. Will be sent before first vision position."""
+        self._origin = (lat, lon, alt)
+
     def send_vision_position(self, x, y, z, roll=0.0, pitch=0.0, yaw=0.0, confidence=1.0):
         if not self.conn:
             return
+        if not self._origin_set and self._origin:
+            self.set_ekf_origin(*self._origin)
+            self._origin_set = True
         usec = int(time.time() * 1e6)
         pos_cov = max(0.01, 0.01 / max(confidence, 0.01))
         ang_cov = pos_cov * 2.0

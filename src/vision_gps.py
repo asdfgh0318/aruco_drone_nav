@@ -1,6 +1,5 @@
 """ArUco Vision GPS - detects ceiling markers and sends position to flight controller."""
 
-import math
 import time
 import signal
 import sys
@@ -126,12 +125,6 @@ def create_detector(dictionary="DICT_4X4_50"):
 # Persistent PnP state for temporal consistency (per marker ID)
 _last_pnp = {}  # marker_id -> (rvec, tvec)
 
-# Base pose: camera facing up at ceiling marker (~3m away)
-# Marker Z points out of face (down from ceiling), camera Z points up
-# So base rotation is ~180° around X: marker appears flipped
-_BASE_RVEC = np.array([[math.pi], [0.0], [0.0]], dtype=np.float64)
-_BASE_TVEC = np.array([[0.0], [0.0], [3.0]], dtype=np.float64)
-
 
 def detect(frame, clahe, detector, cam_matrix, dist_coeffs, marker_size):
     t0 = time.perf_counter()
@@ -198,49 +191,41 @@ def detect(frame, clahe, detector, cam_matrix, dist_coeffs, marker_size):
 
 # --- Position estimation ---
 
-CAM_TO_BODY = np.array([[0, 1, 0], [1, 0, 0], [0, 0, 1]], dtype=float)
-BODY_TO_WORLD_BASE = np.array([[0, 1, 0], [1, 0, 0], [0, 0, 1]], dtype=float)
+# Camera-to-body fixed rotation (physical mounting, upward-facing camera)
+# Camera top → drone right: cam_X → body_Y, cam_Y → body_X, cam_Z → body_Z
+R_CB = np.array([[0, 1, 0], [1, 0, 0], [0, 0, 1]], dtype=float)
 
 
-def euler_from_rvec(rvec):
-    rmat, _ = cv2.Rodrigues(rvec)
-    sy = np.sqrt(rmat[0, 0]**2 + rmat[1, 0]**2)
-    if sy > 1e-6:
-        yaw = np.arctan2(rmat[1, 0], rmat[0, 0])
-    else:
-        yaw = 0.0
-    return np.degrees(yaw)
+def marker_to_world_rotation(orientation_deg):
+    """Fixed rotation from marker frame to world (ENU) for ceiling-mounted marker.
+    Marker Z+ (out of face) points down → world -Z."""
+    theta = np.radians(orientation_deg)
+    c, s = np.cos(theta), np.sin(theta)
+    return np.array([[c, -s, 0], [s, c, 0], [0, 0, -1]])
 
 
 def estimate_single(detection, marker_cfg, imu_attitude=None):
-    marker_in_body = CAM_TO_BODY @ detection.tvec
+    # Rotation from marker frame to camera frame (from solvePnP)
+    R_cm, _ = cv2.Rodrigues(detection.rvec)
 
-    yaw_camera = euler_from_rvec(detection.rvec)
-    drone_yaw = -yaw_camera + marker_cfg["orientation"]
+    # Camera position in marker frame: correct inverse of solvePnP transform
+    cam_in_marker = (-R_cm.T @ detection.tvec.reshape(3, 1)).flatten()
+
+    # Fixed marker-to-world rotation (marker is glued to ceiling, known pose)
+    R_mw = marker_to_world_rotation(marker_cfg["orientation"])
+
+    # Drone position in world = marker_world_pos + camera_offset_in_world
+    pos = marker_cfg["position"] + R_mw @ cam_in_marker
+
+    # Yaw from full rotation chain: body→world = R_mw @ R_cm^T @ R_CB^T
+    R_bw = R_mw @ R_cm.T @ R_CB.T
+    vision_yaw = np.degrees(np.arctan2(R_bw[1, 0], R_bw[0, 0]))
 
     if imu_attitude is not None:
-        # Full body-to-world rotation using IMU roll/pitch/yaw
-        roll, pitch, imu_yaw = imu_attitude
-        # Use IMU yaw (more stable than vision yaw at distance)
-        drone_yaw = np.degrees(imu_yaw)
-        # Build R_world_body = Rz(yaw) @ Ry(pitch) @ Rx(roll)
-        cr, sr = math.cos(roll), math.sin(roll)
-        cp, sp = math.cos(pitch), math.sin(pitch)
-        cy, sy = math.cos(imu_yaw), math.sin(imu_yaw)
-        # ZYX Euler rotation matrix
-        b2w = np.array([
-            [cy*cp,  cy*sp*sr - sy*cr,  cy*sp*cr + sy*sr],
-            [sy*cp,  sy*sp*sr + cy*cr,  sy*sp*cr - cy*sr],
-            [-sp,    cp*sr,             cp*cr],
-        ])
+        drone_yaw = np.degrees(imu_attitude[2])
     else:
-        # No IMU - assume level, use vision yaw only
-        yaw_rad = np.radians(drone_yaw)
-        c, s = np.cos(yaw_rad), np.sin(yaw_rad)
-        yaw_rot = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
-        b2w = yaw_rot @ BODY_TO_WORLD_BASE
+        drone_yaw = vision_yaw
 
-    pos = marker_cfg["position"] - b2w @ marker_in_body
     return pos, drone_yaw
 
 
@@ -407,7 +392,8 @@ def main():
         if gps_mode:
             log.info("Using GPS emulation mode")
         else:
-            mavlink.set_ekf_origin(origin_lat, origin_lon, origin_alt)
+            mavlink.configure_origin(origin_lat, origin_lon, origin_alt)
+            log.info("Using VISION_POSITION_ESTIMATE mode")
 
     server = PositionServer(port=args.port)
     server.start()
@@ -442,17 +428,18 @@ def main():
                 detections_count += 1
                 imu = mavlink.attitude if mavlink else None
                 state = estimate_position(dets, marker_map, last_state, cam_matrix, imu_attitude=imu)
-                last_state = state
+                if state is not None:
+                    last_state = state
                 # Log raw data
                 for d in dets:
                     ir = f"{imu[0]:.4f},{imu[1]:.4f},{imu[2]:.4f}" if imu else ",,"
+                    sp = f"{state.x:.4f},{state.y:.4f},{state.z:.4f},{state.yaw:.2f}" if state else ",,,"
                     csv_file.write(
                         f"{frames},{time.time():.3f},{d.marker_id},"
                         f"{d.centroid[0]:.1f},{d.centroid[1]:.1f},"
                         f"{d.tvec[0]:.4f},{d.tvec[1]:.4f},{d.tvec[2]:.4f},"
                         f"{d.rvec[0]:.4f},{d.rvec[1]:.4f},{d.rvec[2]:.4f},"
-                        f"{state.x:.4f},{state.y:.4f},{state.z:.4f},{state.yaw:.2f},"
-                        f"{ir}\n")
+                        f"{sp},{ir}\n")
                     csv_file.flush()
 
             if args.mode == "run" and state and mavlink:
@@ -471,7 +458,9 @@ def main():
                 if dets:
                     d = dets[0]
                     t = d.tvec
-                    print(f"\rtvec:({t[0]:+.2f},{t[1]:+.2f},{t[2]:+.2f}) ", end="")
+                    r = np.degrees(d.rvec)
+                    print(f"\rtvec:({t[0]:+.2f},{t[1]:+.2f},{t[2]:+.2f}) "
+                          f"rvec:({r[0]:+.1f},{r[1]:+.1f},{r[2]:+.1f})° ", end="")
                     if state:
                         print(f"pos:({state.x:+.2f},{state.y:+.2f},{state.z:.2f}) "
                               f"yaw:{state.yaw:+.1f} conf:{state.confidence:.2f}", end="  ")

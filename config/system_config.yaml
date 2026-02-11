@@ -8,8 +8,8 @@ serial:
 
 camera:
   device_id: 0                   # USB camera device ID
-  width: 1280                    # 720p - faster processing, good for motion
-  height: 720
+  width: 640                     # Match calibration resolution exactly
+  height: 480
   fps: 30                        # Target FPS
   # exposure_time_us: 5000       # Uncomment for low exposure (reduces motion blur, needs good light)
 
@@ -23,7 +23,7 @@ control:
 vision_server:
   port: 8001                     # HTTP server port for stream mode
 
-gps_emulation: true                # true = send GPS_INPUT (works on any firmware)
+gps_emulation: false               # true = send GPS_INPUT (works on any firmware)
                                    # false = send VISION_POSITION_ESTIMATE (needs VISO params)
 
 ekf_origin:
