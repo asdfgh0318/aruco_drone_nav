@@ -53,6 +53,10 @@ recordings/*.json
 # Debug images
 debug_*.jpg
 
+# OS images / firmware binaries
+*.img.xz
+*.tar.gz
+
 # Generated markers (can be regenerated)
 markers/*.png
 markers/*.pdf

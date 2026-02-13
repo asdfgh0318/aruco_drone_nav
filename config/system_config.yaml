@@ -8,8 +8,8 @@ serial:
 
 camera:
   device_id: 0                   # USB camera device ID
-  width: 640                     # Match calibration resolution exactly
-  height: 480
+  width: 1280                    # 720p with scaled calibration
+  height: 720
   fps: 30                        # Target FPS
   # exposure_time_us: 5000       # Uncomment for low exposure (reduces motion blur, needs good light)
 
