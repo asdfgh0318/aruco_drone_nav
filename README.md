@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="banner.svg" alt="aruco_drone_nav banner" width="100%">
+</p>
+
 # ArUco Vision GPS
 
 **Vision-based GPS emulator for indoor drones using ceiling-mounted ArUco markers**

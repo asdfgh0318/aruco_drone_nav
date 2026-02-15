@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 120" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0d1117"/>
+      <stop offset="50%" stop-color="#1a2a2a"/>
+      <stop offset="100%" stop-color="#0d1117"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#00d4ff" stop-opacity="0"/>
+      <stop offset="50%" stop-color="#00d4ff" stop-opacity="0.15"/>
+      <stop offset="100%" stop-color="#00d4ff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="line" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#00d4ff" stop-opacity="0"/>
+      <stop offset="20%" stop-color="#00d4ff" stop-opacity="0.6"/>
+      <stop offset="80%" stop-color="#00d4ff" stop-opacity="0.6"/>
+      <stop offset="100%" stop-color="#00d4ff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="120" fill="url(#bg)"/>
+  <rect y="90" width="1200" height="30" fill="url(#accent)"/>
+
+  <!-- Decorative dots -->
+  <circle cx="449" cy="31" r="1" fill="#00d4ff" opacity="0.03"/>
+<circle cx="698" cy="52" r="2" fill="#00d4ff" opacity="0.04"/>
+<circle cx="947" cy="73" r="3" fill="#00d4ff" opacity="0.05"/>
+<circle cx="396" cy="94" r="1" fill="#00d4ff" opacity="0.06"/>
+<circle cx="645" cy="15" r="2" fill="#00d4ff" opacity="0.07"/>
+<circle cx="894" cy="36" r="3" fill="#00d4ff" opacity="0.03"/>
+<circle cx="343" cy="57" r="1" fill="#00d4ff" opacity="0.04"/>
+<circle cx="592" cy="78" r="2" fill="#00d4ff" opacity="0.05"/>
+<circle cx="841" cy="99" r="3" fill="#00d4ff" opacity="0.06"/>
+<circle cx="290" cy="20" r="1" fill="#00d4ff" opacity="0.07"/>
+<circle cx="539" cy="41" r="2" fill="#00d4ff" opacity="0.03"/>
+<circle cx="788" cy="62" r="3" fill="#00d4ff" opacity="0.04"/>
+
+
+  <!-- Accent line -->
+  <line x1="0" y1="118" x2="1200" y2="118" stroke="url(#line)" stroke-width="2"/>
+
+  <!-- Icon -->
+  <g color="#00d4ff">
+    <g transform="translate(75,35) scale(0.85)" opacity="0.12">
+      <rect x="0" y="0" width="60" height="60" fill="none" stroke="currentColor" stroke-width="3"/>
+      <rect x="5" y="5" width="10" height="10" fill="currentColor"/>
+      <rect x="25" y="5" width="10" height="10" fill="currentColor"/>
+      <rect x="45" y="5" width="10" height="10" fill="currentColor"/>
+      <rect x="5" y="25" width="10" height="10" fill="currentColor"/>
+      <rect x="45" y="25" width="10" height="10" fill="currentColor"/>
+      <rect x="5" y="45" width="10" height="10" fill="currentColor"/>
+      <rect x="25" y="45" width="10" height="10" fill="currentColor"/>
+      <rect x="45" y="45" width="10" height="10" fill="currentColor"/>
+    </g>
+  </g>
+
+  <!-- Title -->
+  <text x="600" y="52" font-family="system-ui,-apple-system,Segoe UI,sans-serif" font-size="32" font-weight="700" fill="#e6edf3" text-anchor="middle" letter-spacing="1">ArUco Drone Nav</text>
+
+  <!-- Subtitle -->
+  <text x="600" y="78" font-family="system-ui,-apple-system,Segoe UI,sans-serif" font-size="14" fill="#8b949e" text-anchor="middle" letter-spacing="0.5">Vision-based indoor GPS for autonomous drone navigation</text>
+</svg>
