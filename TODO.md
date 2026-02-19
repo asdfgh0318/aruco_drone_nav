@@ -2,34 +2,55 @@
 
 ## Priority: Critical
 
-### Immediate Next Steps
-- [ ] **Recalibrate camera at 1280x720** — non-uniform scaling causes yaw-position coupling
-- [ ] **Set FC params for VISO** — VISO_TYPE=1, EK3_SRC1_POSXY/Z/YAW=6, COMPASS_USE=0, GPS_TYPE=0
-- [ ] **Investigate althold crash** — first flight test (2026-02-11) ended in crash
+### Immediate Next Steps (before next flight)
+- [ ] **Fix camera mounting** — camera needs proper fixed position relative to drone frame
+- [ ] **Reduce throttle PWM** — drone is overpowered, adjust MOT_THST_HOVER or throttle range
+- [ ] **Retry althold** — after fixing camera mount and throttle
 
 ### Flight Test Sequence
-- [x] **Bench test** - RPi + FC on bench, GPS_INPUT confirmed (fix=3, sats=12)
-- [ ] **EKF convergence** - Verify FC EKF accepts vision data
-- [ ] **Ground test** - Drone on ground under marker, verify stable position reading
-- [ ] **Tethered hover** - Safety tether, Loiter mode, verify position hold
-- [ ] **Free hover** - Remove tether, hover under single marker
+- [x] **Bench test** — GPS_INPUT confirmed (fix=3, sats=12)
+- [x] **EKF convergence** — VISO position displayed in Mission Planner (2026-02-13)
+- [x] **FC params set** — VISO_TYPE=1, EK3_SRC1_POSXY/Z/YAW=6, COMPASS_USE=0, GPS_TYPE=0
+- [ ] **Ground test** — Drone on ground under marker, verify stable position reading
+- [ ] **Tethered hover** — Safety tether, althold mode
+- [ ] **Free hover** — Remove tether, hover under single marker
 
 ## Priority: Medium
 
 ### Performance
+- [ ] **Recalibrate camera at 1280x720** — fixes yaw-position coupling from non-uniform scaling
 - [ ] **FPS optimization at 1280x720** — currently ~3.7 FPS, target 10+
   - Conditional CLAHE (skip when detection succeeds)
   - Detection parameter tuning
   - ROI-based detection near last marker position
 
 ### Robustness
-- [ ] **Camera focus lock** - Add to Camera.start() so autofocus is disabled automatically
-- [ ] **Clean shutdown** - Fix OpenCV error on camera thread cleanup
+- [ ] **Camera focus lock** — add to Camera.start() so autofocus is disabled automatically
 
 ### Coverage
 - [ ] **Multi-marker deployment** - Multiple ceiling markers for larger area
 
 ## Completed
+
+### Session 2026-02-19: Mission & Telemetry Converter Tools
+- [x] `tools/vr_to_waypoints.py` — VR planner JSON → ArduPilot `.waypoints` (QGC WPL 110)
+  - Auto-detects VR planner JSON vs missions JSON format
+  - Unity→NED coordinate transform + fake lat/lon from EKF origin
+  - Waypoint type mapping (FlyThrough, StopRotate, Record360)
+  - Tested with both input formats
+- [x] `tools/tlog_to_vr_json.py` — Mission Planner `.tlog` → VR planner JSON format
+  - Parses LOCAL_POSITION_NED, ATTITUDE, HEARTBEAT messages
+  - NED→Unity coordinate transform for side-by-side path comparison
+  - Configurable downsampling, time filtering, attitude inclusion
+- [x] Updated TECHNICAL.md with coordinate transform documentation
+
+
+### Session 2026-02-13: VISO End-to-End + Fresh RPi Setup
+- [x] Fresh RPi Trixie image (Debian 13, arm64) via RPi Imager
+- [x] Full RPi setup: SSH key, UART, deps, pymavlink
+- [x] VISO mode confirmed: position visible in Mission Planner
+- [x] FC params set: VISO_TYPE=1, EK3_SRC1_POSXY/Z/YAW=6, COMPASS_USE=0, GPS_TYPE=0
+- [x] EKF origin auto-set working
 
 ### Session 2026-02-11: Position Fix + VISO Migration + Terminal Map
 - [x] Position formula fixed: correct solvePnP inverse (`-R^T @ tvec`)
@@ -73,4 +94,4 @@
 
 ---
 
-*Last updated: 2026-02-11*
+*Last updated: 2026-02-19 (mission tools added)*

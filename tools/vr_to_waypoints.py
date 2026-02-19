@@ -1,0 +1,233 @@
+#!/usr/bin/env python3
+"""Convert Unity VR drone path planner JSON to ArduPilot QGC WPL 110 waypoints file."""
+
+import argparse
+import json
+import math
+import sys
+from pathlib import Path
+
+
+# MAV_CMD constants
+NAV_WAYPOINT = 16
+NAV_TAKEOFF = 22
+NAV_LAND = 21
+NAV_LOITER_TIME = 19
+
+# Frame constants
+FRAME_GLOBAL = 0
+FRAME_GLOBAL_REL_ALT = 3
+
+# Waypoint type mapping (VR planner)
+TYPE_MAP = {
+    0: ("FlyThrough",   NAV_WAYPOINT),
+    1: ("StopRotate",   NAV_WAYPOINT),
+    2: ("Record360",    NAV_LOITER_TIME),
+}
+
+
+def ned_to_latlon(north, east, origin_lat, origin_lon):
+    lat = origin_lat + north / 111111.0
+    lon = origin_lon + east / (111111.0 * math.cos(math.radians(origin_lat)))
+    return lat, lon
+
+
+def parse_vr_planner(data, args):
+    """Parse detailedWaypoints format (Unity VR planner)."""
+    waypoints = []
+    for wp in data["detailedWaypoints"]:
+        if wp.get("wasDeleted", False):
+            continue
+        pos = wp["position"]
+        north = pos["z"]   # Unity forward = North
+        east  = pos["x"]   # Unity right   = East
+        alt   = -pos["y"]  # Unity up       = positive altitude
+
+        if args.fixed_alt is not None:
+            alt = args.fixed_alt
+        alt += args.alt_offset
+
+        lat, lon = ned_to_latlon(north, east, args.origin_lat, args.origin_lon)
+        yaw  = wp.get("yaw", 0.0)
+        wtype = wp.get("type", 0)
+
+        name, cmd = TYPE_MAP.get(wtype, ("FlyThrough", NAV_WAYPOINT))
+
+        if wtype == 1:      # StopRotate
+            hold = 2.0
+        elif wtype == 2:    # Record360
+            hold = args.record360_time
+        else:               # FlyThrough
+            hold = args.hold_default
+
+        waypoints.append({
+            "lat": lat, "lon": lon, "alt": alt,
+            "cmd": cmd, "hold": hold, "yaw": yaw,
+            "name": name,
+        })
+    return waypoints
+
+
+def parse_missions_json(data, args):
+    """Parse waypoints + settings format (missions JSON)."""
+    waypoints = []
+    settings = data.get("settings", {})
+    for wp in data["waypoints"]:
+        north = wp["x"]    # already NED-aligned
+        east  = wp["y"]
+        alt   = wp["z"]    # positive up
+
+        if args.fixed_alt is not None:
+            alt = args.fixed_alt
+        alt += args.alt_offset
+
+        lat, lon = ned_to_latlon(north, east, args.origin_lat, args.origin_lon)
+        yaw      = wp.get("yaw", 0.0)
+        hold     = wp.get("hold_time", args.hold_default)
+
+        waypoints.append({
+            "lat": lat, "lon": lon, "alt": alt,
+            "cmd": NAV_WAYPOINT, "hold": hold, "yaw": yaw,
+            "name": "Waypoint",
+        })
+    return waypoints
+
+
+def fmt_row(index, current, frame, cmd, p1, p2, p3, p4, lat, lon, alt, autocont=1):
+    return (
+        f"{index}\t{current}\t{frame}\t{cmd}\t"
+        f"{p1:.6f}\t{p2:.6f}\t{p3:.6f}\t{p4:.6f}\t"
+        f"{lat:.7f}\t{lon:.7f}\t{alt:.3f}\t{autocont}"
+    )
+
+
+def build_mission(waypoints, args):
+    lines = ["QGC WPL 110"]
+
+    # Home (index 0)
+    lines.append(fmt_row(
+        0, 1, FRAME_GLOBAL, NAV_WAYPOINT,
+        0, 0, 0, 0,
+        args.origin_lat, args.origin_lon, args.origin_alt,
+    ))
+
+    idx = 1
+
+    # Takeoff
+    if not args.no_takeoff:
+        lines.append(fmt_row(
+            idx, 0, FRAME_GLOBAL_REL_ALT, NAV_TAKEOFF,
+            0, 0, 0, 0,
+            args.origin_lat, args.origin_lon, args.takeoff_alt,
+        ))
+        idx += 1
+
+    # Waypoints
+    for wp in waypoints:
+        lines.append(fmt_row(
+            idx, 0, FRAME_GLOBAL_REL_ALT, wp["cmd"],
+            wp["hold"], 0, 0, wp["yaw"],
+            wp["lat"], wp["lon"], wp["alt"],
+        ))
+        idx += 1
+
+    # Land
+    if not args.no_land:
+        lines.append(fmt_row(
+            idx, 0, FRAME_GLOBAL_REL_ALT, NAV_LAND,
+            0, 0, 0, 0,
+            args.origin_lat, args.origin_lon, 0,
+        ))
+
+    return lines
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Convert Unity VR drone path planner JSON to ArduPilot QGC WPL 110 waypoints."
+    )
+    parser.add_argument("input_json", help="Path to VR planner JSON or missions/*.json file")
+    parser.add_argument("-o", "--output", metavar="PATH",
+                        help="Output .waypoints file (default: <input_stem>.waypoints)")
+    parser.add_argument("--origin-lat",      type=float, default=52.2297,  metavar="FLOAT",
+                        help="EKF origin latitude (default: 52.2297)")
+    parser.add_argument("--origin-lon",      type=float, default=21.0122,  metavar="FLOAT",
+                        help="EKF origin longitude (default: 21.0122)")
+    parser.add_argument("--origin-alt",      type=float, default=100.0,    metavar="FLOAT",
+                        help="EKF origin altitude MSL (default: 100.0)")
+    parser.add_argument("--fixed-alt",       type=float, default=None,     metavar="FLOAT",
+                        help="Override all waypoint altitudes to this value (meters relative)")
+    parser.add_argument("--alt-offset",      type=float, default=0.0,      metavar="FLOAT",
+                        help="Add to all computed altitudes (default: 0.0)")
+    parser.add_argument("--takeoff-alt",     type=float, default=1.5,      metavar="FLOAT",
+                        help="Takeoff altitude (default: 1.5)")
+    parser.add_argument("--hold-default",    type=float, default=0.0,      metavar="FLOAT",
+                        help="Default hold time for FlyThrough waypoints (default: 0.0)")
+    parser.add_argument("--record360-time",  type=float, default=30.0,     metavar="FLOAT",
+                        help="Loiter time for Record360 waypoints (default: 30.0)")
+    parser.add_argument("--no-takeoff",      action="store_true",
+                        help="Skip TAKEOFF command")
+    parser.add_argument("--no-land",         action="store_true",
+                        help="Skip LAND command")
+    parser.add_argument("-v", "--verbose",   action="store_true",
+                        help="Print each waypoint")
+    args = parser.parse_args()
+
+    input_path = Path(args.input_json)
+    if not input_path.exists():
+        print(f"ERROR: File not found: {input_path}", file=sys.stderr)
+        sys.exit(1)
+
+    with open(input_path) as f:
+        data = json.load(f)
+
+    # Auto-detect format
+    if "detailedWaypoints" in data:
+        fmt = "VR planner"
+        waypoints = parse_vr_planner(data, args)
+    elif "waypoints" in data and "settings" in data:
+        fmt = "missions JSON"
+        waypoints = parse_missions_json(data, args)
+    else:
+        print("ERROR: Unrecognised JSON format (expected 'detailedWaypoints' or 'waypoints'+'settings')",
+              file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Format detected: {fmt}")
+    print(f"Waypoints loaded: {len(waypoints)}")
+
+    if not waypoints:
+        print("WARNING: No waypoints after filtering.", file=sys.stderr)
+
+    # Verbose listing
+    if args.verbose:
+        for i, wp in enumerate(waypoints):
+            cmd_name = {NAV_WAYPOINT: "NAV_WAYPOINT", NAV_LOITER_TIME: "NAV_LOITER_TIME"}.get(wp["cmd"], str(wp["cmd"]))
+            print(f"  [{i:3d}] {wp['name']:12s} {cmd_name:18s} "
+                  f"lat={wp['lat']:.6f} lon={wp['lon']:.6f} alt={wp['alt']:.2f}m "
+                  f"hold={wp['hold']:.1f}s yaw={wp['yaw']:.1f}")
+
+    # Summary stats
+    if waypoints:
+        alts = [wp["alt"] for wp in waypoints]
+        lats = [wp["lat"] for wp in waypoints]
+        lons = [wp["lon"] for wp in waypoints]
+        print(f"Altitude range : {min(alts):.2f} .. {max(alts):.2f} m (relative)")
+        print(f"Lat range      : {min(lats):.6f} .. {max(lats):.6f}")
+        print(f"Lon range      : {min(lons):.6f} .. {max(lons):.6f}")
+
+        negative_alts = [wp["alt"] for wp in waypoints if wp["alt"] < 0]
+        if negative_alts:
+            print(f"WARNING: {len(negative_alts)} waypoint(s) have negative altitude. "
+                  f"Use --alt-offset or --fixed-alt to correct.", file=sys.stderr)
+
+    # Build and write output
+    lines = build_mission(waypoints, args)
+
+    output_path = Path(args.output) if args.output else input_path.with_suffix(".waypoints")
+    output_path.write_text("\n".join(lines) + "\n")
+    print(f"Written: {output_path}  ({len(lines) - 1} mission items incl. home)")
+
+
+if __name__ == "__main__":
+    main()

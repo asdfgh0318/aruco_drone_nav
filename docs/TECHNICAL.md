@@ -103,6 +103,41 @@ mavlink_z = -enu_z   # Down = -ENU Z
 **GET /position** - JSON with position and timing data
 **GET /debug-frame** - JPEG image of current camera frame
 
+## Mission & Telemetry Tools
+
+### Coordinate Transforms (Unity ↔ NED)
+
+The VR drone path planner uses Unity's left-handed coordinate system:
+- **Unity**: X=right, Y=up, Z=forward
+- **ArduPilot NED**: X=North, Y=East, Z=Down
+
+```
+Unity → NED:
+  NED.North = Unity.Z     (forward = North)
+  NED.East  = Unity.X     (right = East)
+  alt_rel   = -Unity.Y    (up → positive altitude)
+
+NED → Unity (reverse):
+  Unity.X = NED.East       (NED.Y)
+  Unity.Y = -NED.Down      (-NED.Z)
+  Unity.Z = NED.North      (NED.X)
+```
+
+Yaw: both systems use clockwise-from-North/forward — no remapping needed.
+
+### NED to fake lat/lon (indoor missions)
+```python
+lat = origin_lat + north_m / 111111.0
+lon = origin_lon + east_m / (111111.0 * cos(origin_lat_rad))
+```
+
+### Tools
+
+| Tool | Purpose |
+|------|---------|
+| `tools/vr_to_waypoints.py` | Convert VR planner JSON → ArduPilot `.waypoints` (QGC WPL 110) |
+| `tools/tlog_to_vr_json.py` | Convert Mission Planner `.tlog` → VR planner JSON format |
+
 ## Known Issues
 
 ### OpenCV CORNER_REFINE_CONTOUR Crash
