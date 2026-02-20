@@ -107,15 +107,19 @@ mavlink_z = -enu_z   # Down = -ENU Z
 
 ### Coordinate Transforms (Unity ↔ NED)
 
-The VR drone path planner uses Unity's left-handed coordinate system:
-- **Unity**: X=right, Y=up, Z=forward
+The VR drone path planner uses Unity model-local coordinates:
+- **Unity**: X=East, Y=Up, Z=North
 - **ArduPilot NED**: X=North, Y=East, Z=Down
+
+Verified by checking `detailedSegments`: `verticalChange == |dY|` and
+`lengthHorizontal == sqrt(dX² + dZ²)` for all segments. Yaw is CW from +Z (North).
 
 ```
 Unity → NED:
-  NED.North = Unity.Z     (forward = North)
-  NED.East  = Unity.X     (right = East)
-  alt_rel   = -Unity.Y    (up → positive altitude)
+  NED.North = Unity.Z
+  NED.East  = Unity.X
+  NED.Down  = -Unity.Y
+  alt_rel   = Unity.Y     (Y is up = altitude above model origin)
 
 NED → Unity (reverse):
   Unity.X = NED.East       (NED.Y)
@@ -123,7 +127,7 @@ NED → Unity (reverse):
   Unity.Z = NED.North      (NED.X)
 ```
 
-Yaw: both systems use clockwise-from-North/forward — no remapping needed.
+Yaw: both systems use clockwise-from-North (Unity measures CW from +Z) — no remapping needed.
 
 ### NED to fake lat/lon (indoor missions)
 ```python

@@ -32,16 +32,72 @@ def ned_to_latlon(north, east, origin_lat, origin_lon):
     return lat, lon
 
 
+def get_traversal_order(data):
+    """Extract waypoint visit order from detailedSegments.
+
+    Segments form a chain: fromId=-1 (start) → wp → wp → ... → toId=-2 (end).
+    Returns list of waypoint IDs in traversal order.
+    """
+    segments = data.get("detailedSegments", [])
+    if not segments:
+        return None
+
+    # Build adjacency: fromId → toId
+    next_wp = {}
+    for seg in segments:
+        next_wp[seg["fromId"]] = seg["toId"]
+
+    # Walk the chain from start (-1)
+    order = []
+    current = next_wp.get(-1)
+    visited = set()
+    while current is not None and current != -2 and current not in visited:
+        order.append(current)
+        visited.add(current)
+        current = next_wp.get(current)
+
+    return order
+
+
 def parse_vr_planner(data, args):
-    """Parse detailedWaypoints format (Unity VR planner)."""
-    waypoints = []
+    """Parse detailedWaypoints format (Unity VR planner).
+
+    Uses detailedSegments to determine path traversal order (not creation order).
+    """
+    # Build lookup by waypoint ID
+    wp_by_id = {}
     for wp in data["detailedWaypoints"]:
         if wp.get("wasDeleted", False):
             continue
+        wp_by_id[wp["id"]] = wp
+
+    # Get traversal order from segments, fall back to creation order
+    traversal = get_traversal_order(data)
+    if traversal:
+        # Filter to only IDs that exist (non-deleted)
+        ordered_ids = [wid for wid in traversal if wid in wp_by_id]
+        if len(ordered_ids) != len(wp_by_id):
+            missing = set(wp_by_id.keys()) - set(ordered_ids)
+            print(f"  Note: {len(missing)} waypoint(s) not in segment chain: {missing}")
+    else:
+        ordered_ids = list(wp_by_id.keys())
+        print("  Note: No detailedSegments — using creation order")
+
+    # Get start position altitude for zero-referencing
+    segments = data.get("detailedSegments", [])
+    if segments:
+        start_alt = segments[0]["fromPos"]["y"]
+    else:
+        first_wp = wp_by_id[ordered_ids[0]] if ordered_ids else None
+        start_alt = first_wp["position"]["y"] if first_wp else 0.0
+
+    waypoints = []
+    for wid in ordered_ids:
+        wp = wp_by_id[wid]
         pos = wp["position"]
-        north = pos["z"]   # Unity forward = North
-        east  = pos["x"]   # Unity right   = East
-        alt   = -pos["y"]  # Unity up       = positive altitude
+        north = pos["z"]   # Unity Z = North (yaw reference axis)
+        east  = pos["x"]   # Unity X = East
+        alt   = pos["y"] - start_alt  # Zero-referenced to path start position
 
         if args.fixed_alt is not None:
             alt = args.fixed_alt
@@ -61,6 +117,7 @@ def parse_vr_planner(data, args):
             hold = args.hold_default
 
         waypoints.append({
+            "id": wid,
             "lat": lat, "lon": lon, "alt": alt,
             "cmd": cmd, "hold": hold, "yaw": yaw,
             "name": name,
@@ -113,12 +170,15 @@ def build_mission(waypoints, args):
 
     idx = 1
 
-    # Takeoff
+    # Takeoff — default to first waypoint altitude if not explicitly set
     if not args.no_takeoff:
+        takeoff_alt = args.takeoff_alt if args.takeoff_alt is not None else (
+            waypoints[0]["alt"] if waypoints else 1.5
+        )
         lines.append(fmt_row(
             idx, 0, FRAME_GLOBAL_REL_ALT, NAV_TAKEOFF,
             0, 0, 0, 0,
-            args.origin_lat, args.origin_lon, args.takeoff_alt,
+            args.origin_lat, args.origin_lon, takeoff_alt,
         ))
         idx += 1
 
@@ -159,8 +219,8 @@ def main():
                         help="Override all waypoint altitudes to this value (meters relative)")
     parser.add_argument("--alt-offset",      type=float, default=0.0,      metavar="FLOAT",
                         help="Add to all computed altitudes (default: 0.0)")
-    parser.add_argument("--takeoff-alt",     type=float, default=1.5,      metavar="FLOAT",
-                        help="Takeoff altitude (default: 1.5)")
+    parser.add_argument("--takeoff-alt",     type=float, default=None,     metavar="FLOAT",
+                        help="Takeoff altitude (default: first waypoint altitude)")
     parser.add_argument("--hold-default",    type=float, default=0.0,      metavar="FLOAT",
                         help="Default hold time for FlyThrough waypoints (default: 0.0)")
     parser.add_argument("--record360-time",  type=float, default=30.0,     metavar="FLOAT",
@@ -203,7 +263,8 @@ def main():
     if args.verbose:
         for i, wp in enumerate(waypoints):
             cmd_name = {NAV_WAYPOINT: "NAV_WAYPOINT", NAV_LOITER_TIME: "NAV_LOITER_TIME"}.get(wp["cmd"], str(wp["cmd"]))
-            print(f"  [{i:3d}] {wp['name']:12s} {cmd_name:18s} "
+            wp_id = f"WP{wp['id']}" if "id" in wp else f"#{i}"
+            print(f"  [{i:3d}] {wp_id:5s} {wp['name']:12s} {cmd_name:18s} "
                   f"lat={wp['lat']:.6f} lon={wp['lon']:.6f} alt={wp['alt']:.2f}m "
                   f"hold={wp['hold']:.1f}s yaw={wp['yaw']:.1f}")
 

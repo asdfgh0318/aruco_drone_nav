@@ -141,9 +141,9 @@ def build_output(pos_msgs, att_msgs, mode_msgs, args):
 
         last_kept_time = rel_t
 
-        unity_x = ned_y
-        unity_y = -ned_z
-        unity_z = ned_x
+        unity_x = ned_y    # NED East  → Unity X (East)
+        unity_y = -ned_z   # NED Down  → Unity Y (Up)
+        unity_z = ned_x    # NED North → Unity Z (North)
 
         sample = {
             'time': round(rel_t, 4),
