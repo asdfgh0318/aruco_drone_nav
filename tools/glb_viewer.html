@@ -30,7 +30,7 @@ body { overflow: hidden; background: #1a1a2e; font-family: -apple-system, BlinkM
   width: 90px; padding: 2px 4px; font-size: 11px; font-family: monospace;
   background: #0a1830; color: #e0e0e0; border: 1px solid #0f3460; border-radius: 3px;
 }
-#navbar .hint { margin-left: auto; font-size: 11px; color: #555; white-space: nowrap; }
+#navbar .hint { font-size: 11px; color: #555; white-space: nowrap; }
 
 #viewport { position: absolute; top: 48px; left: 0; right: 0; bottom: 0; }
 
@@ -78,6 +78,46 @@ body { overflow: hidden; background: #1a1a2e; font-family: -apple-system, BlinkM
   border: 3px dashed #e94560; display: none; z-index: 40;
   justify-content: center; align-items: center; font-size: 20px; color: #e94560;
 }
+/* Help button */
+#help-btn {
+  width: 28px; height: 28px; border-radius: 50%; margin-left: auto;
+  border: 1px solid #0f3460; background: #0f3460; color: #e94560;
+  font-size: 14px; font-weight: bold; cursor: pointer; transition: background 0.15s;
+}
+#help-btn:hover { background: #1a4080; }
+
+/* Tutorial overlay */
+#tutorial-backdrop {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+  z-index: 1000; display: none;
+}
+#tutorial-card {
+  position: fixed; z-index: 1002; background: #16213e;
+  border: 1px solid #e94560; border-radius: 8px; padding: 20px 24px;
+  max-width: 380px; min-width: 280px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  transition: top 0.3s ease, left 0.3s ease; display: none;
+}
+#tutorial-card .tut-title { color: #e94560; font-size: 15px; font-weight: 600; margin: 0 0 8px; }
+#tutorial-card .tut-body { font-size: 13px; line-height: 1.6; color: #ccc; margin-bottom: 16px; }
+#tutorial-card .tut-body b { color: #e0e0e0; }
+#tutorial-card .tut-footer { display: flex; align-items: center; justify-content: space-between; }
+#tutorial-card .tut-step { font-size: 11px; color: #666; }
+#tutorial-card .tut-btns { display: flex; gap: 8px; }
+#tutorial-card .tut-btns button {
+  padding: 5px 14px; border-radius: 4px; font-size: 12px; cursor: pointer;
+  border: 1px solid #0f3460; background: #0f3460; color: #e0e0e0; transition: background 0.15s;
+}
+#tutorial-card .tut-btns button:hover { background: #1a4080; }
+#tutorial-card .tut-btns .tut-primary { background: #e94560; border-color: #e94560; color: #fff; }
+#tutorial-card .tut-btns .tut-primary:hover { background: #c73a52; }
+#tutorial-card .tut-btns .tut-skip { background: transparent; border-color: transparent; color: #666; }
+#tutorial-card .tut-btns .tut-skip:hover { color: #999; }
+.tutorial-highlight {
+  position: relative !important; z-index: 1001 !important;
+  box-shadow: 0 0 0 4px #e94560, 0 0 16px rgba(233,69,96,0.4) !important;
+  border-radius: 4px;
+}
 </style>
 </head>
 <body>
@@ -85,19 +125,25 @@ body { overflow: hidden; background: #1a1a2e; font-family: -apple-system, BlinkM
 <div id="navbar">
   <h1>ArUco DroneNav GLB Viewer</h1>
   <div class="sep"></div>
-  <label class="file-btn">GLB<input type="file" id="glb-input" accept=".glb,.gltf"></label>
-  <label class="file-btn">JSON<input type="file" id="json-input" accept=".json"></label>
-  <label class="file-btn" style="background:#2a1a40;border-color:#4a2a70">WPL<input type="file" id="wpl-input" accept=".waypoints,.txt"></label>
-  <div class="sep"></div>
-  <div class="origin-group">
-    <label>Origin:</label>
-    <input id="origin-lat" type="text" value="52.2297" title="Origin latitude">
-    <input id="origin-lon" type="text" value="21.0122" title="Origin longitude">
+  <div id="file-btns-group" style="display:flex;align-items:center;gap:10px">
+    <label class="file-btn">GLB<input type="file" id="glb-input" accept=".glb,.gltf"></label>
+    <label class="file-btn">JSON<input type="file" id="json-input" accept=".json"></label>
+    <label class="file-btn" style="background:#2a1a40;border-color:#4a2a70">WPL<input type="file" id="wpl-input" accept=".waypoints,.txt"></label>
   </div>
-  <div class="origin-group">
-    <label>StartAlt:</label>
-    <input id="start-alt" type="text" value="0" title="Unity Y of arming point (auto-set from JSON)" style="width:60px"></div>
-  <span class="hint">R=reset &nbsp;G=grid &nbsp;T=traj &nbsp;W=wp &nbsp;A=ardupilot</span>
+  <div class="sep"></div>
+  <div id="coords-group" style="display:flex;align-items:center;gap:10px">
+    <div class="origin-group">
+      <label>Origin:</label>
+      <input id="origin-lat" type="text" value="52.2297" title="Origin latitude">
+      <input id="origin-lon" type="text" value="21.0122" title="Origin longitude">
+    </div>
+    <div class="origin-group">
+      <label>StartAlt:</label>
+      <input id="start-alt" type="text" value="0" title="Unity Y of arming point (auto-set from JSON)" style="width:60px">
+    </div>
+  </div>
+  <button id="help-btn" title="Tutorial">?</button>
+  <span class="hint">R=reset &nbsp;G=grid &nbsp;T=traj &nbsp;W=wp &nbsp;A=ardupilot &nbsp;?=help</span>
 </div>
 
 <div id="viewport">
@@ -856,6 +902,136 @@ window.addEventListener('resize', () => {
     });
   }
 });
+</script>
+
+<div id="tutorial-backdrop"></div>
+<div id="tutorial-card">
+  <div class="tut-title"></div>
+  <div class="tut-body"></div>
+  <div class="tut-footer">
+    <span class="tut-step"></span>
+    <div class="tut-btns">
+      <button class="tut-skip">Skip</button>
+      <button class="tut-back">Back</button>
+      <button class="tut-next tut-primary">Next</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  const STEPS = [
+    { target: null, title: 'Welcome',
+      body: 'Drone Mission Viewer lets you visualize 3D building models with drone flight paths and ArduPilot missions. Let\u2019s walk through the main features.' },
+    { target: '#file-btns-group', title: 'Load Files',
+      body: 'Use these buttons to load files: <b>GLB</b> for 3D models, <b>JSON</b> for VR planner missions, <b>WPL</b> for ArduPilot waypoints. You can also drag & drop files onto the viewport.' },
+    { target: '#coords-group', title: 'Coordinates',
+      body: 'Set the GPS origin for coordinate conversion. <b>StartAlt</b> is the Unity Y of the arming position \u2014 it\u2019s auto-filled when you load a JSON file.' },
+    { target: null, title: '3D Navigation',
+      body: '<b>Left-drag</b> to orbit, <b>right-drag</b> to pan, <b>scroll</b> to zoom. Click on the 3D model to see Unity/NED coordinates. Hover over waypoints for details.' },
+    { target: '#toggle-panel', title: 'Layers',
+      body: 'Toggle visibility of flight paths, waypoints, ArduPilot missions, and the grid. This panel appears after loading data.' },
+    { target: null, title: 'Convert Panel',
+      body: 'Convert files directly in the browser. <b>JSON \u2192 .waypoints</b> converts VR planner paths to ArduPilot missions. <b>.tlog \u2192 JSON</b> converts Mission Planner telemetry logs. Requires <b>server.py</b>.' },
+    { target: null, title: 'Keyboard Shortcuts',
+      body: 'Quick keys: <b>R</b> reset camera, <b>G</b> grid, <b>T</b> trajectory, <b>W</b> waypoints, <b>A</b> ArduPilot, <b>C</b> convert panel. Press <b>?</b> anytime to replay this tour.' },
+  ];
+
+  let currentStep = 0;
+  let prevHighlight = null;
+  const backdrop = document.getElementById('tutorial-backdrop');
+  const card = document.getElementById('tutorial-card');
+  const navbar = document.getElementById('navbar');
+
+  function startTutorial() {
+    currentStep = 0;
+    backdrop.style.display = 'block';
+    card.style.display = 'block';
+    showStep(0);
+  }
+
+  function endTutorial() {
+    backdrop.style.display = 'none';
+    card.style.display = 'none';
+    clearHighlight();
+    localStorage.setItem('tutorial_done', '1');
+  }
+
+  function clearHighlight() {
+    if (prevHighlight) {
+      prevHighlight.classList.remove('tutorial-highlight');
+      prevHighlight = null;
+    }
+    navbar.style.zIndex = '100';
+  }
+
+  function showStep(n) {
+    currentStep = n;
+    const step = STEPS[n];
+    clearHighlight();
+
+    let targetEl = step.target ? document.querySelector(step.target) : null;
+    if (targetEl && (getComputedStyle(targetEl).display === 'none' || !targetEl.offsetParent)) {
+      targetEl = null;
+    }
+
+    if (targetEl) {
+      targetEl.classList.add('tutorial-highlight');
+      prevHighlight = targetEl;
+      if (navbar.contains(targetEl)) navbar.style.zIndex = '1001';
+    }
+
+    card.querySelector('.tut-title').textContent = step.title;
+    card.querySelector('.tut-body').innerHTML = step.body;
+    card.querySelector('.tut-step').textContent = (n + 1) + ' of ' + STEPS.length;
+    card.querySelector('.tut-back').style.display = n === 0 ? 'none' : '';
+    card.querySelector('.tut-next').textContent = n === STEPS.length - 1 ? 'Done' : 'Next';
+
+    positionCard(targetEl);
+  }
+
+  function positionCard(targetEl) {
+    var cardW = card.offsetWidth, cardH = card.offsetHeight;
+    var viewW = window.innerWidth, viewH = window.innerHeight;
+
+    if (!targetEl) {
+      card.style.top = (viewH / 2 - cardH / 2) + 'px';
+      card.style.left = (viewW / 2 - cardW / 2) + 'px';
+      return;
+    }
+
+    var rect = targetEl.getBoundingClientRect();
+    var gap = 12;
+    var top = rect.bottom + gap;
+    var left = rect.left + rect.width / 2 - cardW / 2;
+
+    if (top + cardH > viewH - gap) top = rect.top - cardH - gap;
+    left = Math.max(gap, Math.min(left, viewW - cardW - gap));
+    top = Math.max(gap, Math.min(top, viewH - cardH - gap));
+
+    card.style.top = top + 'px';
+    card.style.left = left + 'px';
+  }
+
+  card.querySelector('.tut-next').addEventListener('click', function() {
+    if (currentStep >= STEPS.length - 1) endTutorial();
+    else showStep(currentStep + 1);
+  });
+  card.querySelector('.tut-back').addEventListener('click', function() {
+    if (currentStep > 0) showStep(currentStep - 1);
+  });
+  card.querySelector('.tut-skip').addEventListener('click', endTutorial);
+
+  document.getElementById('help-btn').addEventListener('click', startTutorial);
+
+  document.addEventListener('keydown', function(e) {
+    if (e.target.tagName === 'INPUT') return;
+    if (e.key === '?') { e.preventDefault(); startTutorial(); }
+    if (e.key === 'Escape' && backdrop.style.display === 'block') endTutorial();
+  });
+
+  if (!localStorage.getItem('tutorial_done')) startTutorial();
+})();
 </script>
 </body>
 </html>
