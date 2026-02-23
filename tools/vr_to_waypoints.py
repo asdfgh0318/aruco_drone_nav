@@ -181,11 +181,22 @@ def build_mission(waypoints, args, start_pos=None, end_pos=None, start_alt=None)
     if start_alt is not None:
         lines.append(f"# ARUCO_NAV start_alt={start_alt:.4f}")
 
-    # Home (index 0)
+    # Compute takeoff position (used for both Home and Takeoff)
+    if start_pos is not None:
+        to_lat, to_lon = ned_to_latlon(
+            start_pos["z"], start_pos["x"],  # Unity Z=North, X=East
+            args.origin_lat, args.origin_lon,
+        )
+    elif waypoints:
+        to_lat, to_lon = waypoints[0]["lat"], waypoints[0]["lon"]
+    else:
+        to_lat, to_lon = args.origin_lat, args.origin_lon
+
+    # Home (index 0) — set to takeoff position so mission starts there
     lines.append(fmt_row(
         0, 1, FRAME_GLOBAL, NAV_WAYPOINT,
         0, 0, 0, 0,
-        args.origin_lat, args.origin_lon, args.origin_alt,
+        to_lat, to_lon, args.origin_alt,
     ))
 
     idx = 1
@@ -195,13 +206,6 @@ def build_mission(waypoints, args, start_pos=None, end_pos=None, start_alt=None)
         takeoff_alt = args.takeoff_alt if args.takeoff_alt is not None else (
             waypoints[0]["alt"] if waypoints else 1.5
         )
-        if start_pos is not None:
-            to_lat, to_lon = ned_to_latlon(
-                start_pos["z"], start_pos["x"],  # Unity Z=North, X=East
-                args.origin_lat, args.origin_lon,
-            )
-        else:
-            to_lat, to_lon = args.origin_lat, args.origin_lon
         lines.append(fmt_row(
             idx, 0, FRAME_GLOBAL_REL_ALT, NAV_TAKEOFF,
             0, 0, 0, 0,
