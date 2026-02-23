@@ -59,6 +59,31 @@ body { overflow: hidden; background: #1a1a2e; font-family: -apple-system, BlinkM
 .toggle-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 .toggle-line { display: inline-block; width: 14px; height: 3px; border-radius: 1px; }
 
+/* Convert panel - interactive */
+#convert-panel {
+  position: absolute; bottom: 12px; right: 12px;
+  background: rgba(22,33,62,0.92); border: 1px solid #0f3460;
+  border-radius: 6px; padding: 10px 14px; font-size: 12px; line-height: 1.8;
+  pointer-events: auto; backdrop-filter: blur(4px); display: none; z-index: 20;
+  min-width: 220px;
+}
+#convert-panel b { color: #e94560; }
+#convert-panel .conv-row { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+#convert-panel input[type=number] {
+  width: 60px; padding: 2px 4px; font-size: 11px; font-family: monospace;
+  background: #0a1830; color: #e0e0e0; border: 1px solid #0f3460; border-radius: 3px;
+}
+#convert-panel label.conv-check { display: flex; align-items: center; gap: 6px; cursor: pointer; white-space: nowrap; }
+#convert-panel input[type=checkbox] { accent-color: #e94560; cursor: pointer; }
+#convert-panel button {
+  margin-top: 4px; padding: 5px 12px; border-radius: 4px; font-size: 12px; width: 100%;
+  background: #0f3460; color: #e0e0e0; border: 1px solid #1a4080;
+  cursor: pointer; transition: background 0.15s;
+}
+#convert-panel button:hover:not(:disabled) { background: #1a4080; }
+#convert-panel button:disabled { opacity: 0.4; cursor: default; }
+#convert-panel .conv-status { font-size: 11px; color: #888; margin-top: 2px; }
+
 .legend-row { display: flex; align-items: center; gap: 6px; }
 .legend-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
 
@@ -143,7 +168,7 @@ body { overflow: hidden; background: #1a1a2e; font-family: -apple-system, BlinkM
     </div>
   </div>
   <button id="help-btn" title="Tutorial">?</button>
-  <span class="hint">R=reset &nbsp;G=grid &nbsp;T=traj &nbsp;W=wp &nbsp;A=ardupilot &nbsp;?=help</span>
+  <span class="hint">R=reset &nbsp;G=grid &nbsp;T=traj &nbsp;W=wp &nbsp;A=ardupilot &nbsp;C=convert &nbsp;?=help</span>
 </div>
 
 <div id="viewport">
@@ -181,6 +206,17 @@ body { overflow: hidden; background: #1a1a2e; font-family: -apple-system, BlinkM
     <div class="legend-row"><span style="color:#ff8800">▲</span> Takeoff &nbsp; <span style="color:#ff0000">▼</span> Land</div>
   </div>
 
+  <!-- Convert panel -->
+  <div id="convert-panel">
+    <div><b>Convert</b> <span style="float:right;cursor:pointer;color:#666" id="conv-close">&#x2715;</span></div>
+    <div class="conv-row"><span style="color:#888">Alt offset:</span><input type="number" id="conv-alt-offset" value="0" step="0.1"></div>
+    <div class="conv-row"><span style="color:#888">360° time:</span><input type="number" id="conv-360-time" value="30" step="1">s</div>
+    <label class="conv-check"><input type="checkbox" id="conv-no-takeoff"> No takeoff</label>
+    <label class="conv-check"><input type="checkbox" id="conv-no-land"> No land</label>
+    <button id="conv-btn" disabled>JSON &#x2192; .waypoints</button>
+    <div class="conv-status" id="conv-status"></div>
+  </div>
+
   <div class="panel" id="stats-panel"></div>
   <div id="tooltip"></div>
 </div>
@@ -212,9 +248,11 @@ let clickMarker = null;
 let gridHelper = null;
 let axesHelper = null;
 
-// Store JSON start altitude for reverse WPL conversion
+// Store JSON data for conversion
 let jsonStartAlt = 0;
 let jsonLoaded = false;
+let jsonData = null;
+let jsonFileName = '';
 
 const WP_COLORS = { 0: 0x00ff88, 1: 0xffdd00, 2: 0xff4444 };
 const WP_NAMES = { 0: 'FlyThrough', 1: 'StopRotate', 2: 'Record360' };
@@ -351,7 +389,10 @@ function loadTrajectory(data, fileName) {
     jsonStartAlt = waypoints[0].position.y;
   }
   jsonLoaded = true;
+  jsonData = data;
   document.getElementById('start-alt').value = jsonStartAlt.toFixed(4);
+  document.getElementById('conv-btn').disabled = false;
+  document.getElementById('conv-status').textContent = '';
 
   // ── Flight path from samples ──
   if (samples.length > 1) {
@@ -817,6 +858,157 @@ document.addEventListener('keydown', (e) => {
       ardupilotLineGroup.visible = !ardupilotLineGroup.visible;
       document.getElementById('chk-ardu-line').checked = ardupilotLineGroup.visible;
     }
+  } else if (k === 'c') {
+    toggleConvertPanel();
+  }
+});
+
+// ── Convert Panel ──
+function toggleConvertPanel() {
+  const panel = document.getElementById('convert-panel');
+  panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+}
+
+document.getElementById('conv-close').addEventListener('click', () => {
+  document.getElementById('convert-panel').style.display = 'none';
+});
+
+function fmtWpRow(index, current, frame, cmd, p1, p2, p3, p4, lat, lon, alt) {
+  return `${index}\t${current}\t${frame}\t${cmd}\t${p1.toFixed(6)}\t${p2.toFixed(6)}\t${p3.toFixed(6)}\t${p4.toFixed(6)}\t${lat.toFixed(7)}\t${lon.toFixed(7)}\t${alt.toFixed(3)}\t1`;
+}
+
+function nedToLatLon(north, east, originLat, originLon) {
+  const lat = originLat + north / 111111.0;
+  const lon = originLon + east / (111111.0 * Math.cos(originLat * Math.PI / 180));
+  return { lat, lon };
+}
+
+function convertJsonToWaypoints(data) {
+  const origin = getOrigin();
+  const altOffset = parseFloat(document.getElementById('conv-alt-offset').value) || 0;
+  const record360Time = parseFloat(document.getElementById('conv-360-time').value) || 30;
+  const noTakeoff = document.getElementById('conv-no-takeoff').checked;
+  const noLand = document.getElementById('conv-no-land').checked;
+  const originAlt = 100.0;
+
+  // Build wp lookup
+  const wpById = {};
+  for (const wp of data.detailedWaypoints) {
+    if (wp.wasDeleted) continue;
+    wpById[wp.id] = wp;
+  }
+
+  // Traversal order from segments
+  const segments = data.detailedSegments || [];
+  let orderedIds = null;
+  if (segments.length > 0) {
+    const nextWp = {};
+    for (const seg of segments) nextWp[seg.fromId] = seg.toId;
+    orderedIds = [];
+    let current = nextWp[-1];
+    const visited = new Set();
+    while (current !== undefined && current !== -2 && !visited.has(current)) {
+      if (wpById[current]) orderedIds.push(current);
+      visited.add(current);
+      current = nextWp[current];
+    }
+  }
+  if (!orderedIds || orderedIds.length === 0) {
+    orderedIds = Object.keys(wpById).map(Number);
+  }
+
+  // Start altitude
+  let segStartAlt;
+  if (segments.length > 0) {
+    segStartAlt = segments[0].fromPos.y;
+  } else if (orderedIds.length > 0) {
+    segStartAlt = wpById[orderedIds[0]].position.y;
+  } else {
+    segStartAlt = 0;
+  }
+
+  // Start position for takeoff/home
+  const startPos = segments.length > 0 ? segments[0].fromPos : null;
+
+  // Build waypoints
+  const waypoints = [];
+  for (const wid of orderedIds) {
+    const wp = wpById[wid];
+    const pos = wp.position;
+    const north = pos.z, east = pos.x;
+    const alt = pos.y - segStartAlt + altOffset;
+    const { lat, lon } = nedToLatLon(north, east, origin.lat, origin.lon);
+    const yaw = wp.yaw || 0;
+    const wtype = wp.type || 0;
+    const cmd = wtype === 2 ? 19 : 16; // Record360→LOITER_TIME, else→NAV_WP
+    let hold;
+    if (wtype === 1) hold = 2.0;
+    else if (wtype === 2) hold = record360Time;
+    else hold = 0.0;
+    waypoints.push({ lat, lon, alt, cmd, hold, yaw });
+  }
+
+  // Build mission lines
+  const lines = ['QGC WPL 110'];
+  lines.push(`# ARUCO_NAV start_alt=${segStartAlt.toFixed(4)}`);
+
+  // Takeoff position
+  let toLat, toLon;
+  if (startPos) {
+    ({ lat: toLat, lon: toLon } = nedToLatLon(startPos.z, startPos.x, origin.lat, origin.lon));
+  } else if (waypoints.length) {
+    toLat = waypoints[0].lat; toLon = waypoints[0].lon;
+  } else {
+    toLat = origin.lat; toLon = origin.lon;
+  }
+
+  // Home (index 0)
+  lines.push(fmtWpRow(0, 1, 0, 16, 0, 0, 0, 0, toLat, toLon, originAlt));
+  let idx = 1;
+
+  // Takeoff
+  if (!noTakeoff) {
+    const takeoffAlt = waypoints.length > 0 ? waypoints[0].alt : 1.5;
+    lines.push(fmtWpRow(idx, 0, 3, 22, 0, 0, 0, 0, toLat, toLon, takeoffAlt));
+    idx++;
+  }
+
+  // Waypoints
+  for (const wp of waypoints) {
+    lines.push(fmtWpRow(idx, 0, 3, wp.cmd, wp.hold, 0, 0, wp.yaw, wp.lat, wp.lon, wp.alt));
+    idx++;
+  }
+
+  // Land
+  if (!noLand) {
+    const landLat = waypoints.length > 0 ? waypoints[waypoints.length - 1].lat : origin.lat;
+    const landLon = waypoints.length > 0 ? waypoints[waypoints.length - 1].lon : origin.lon;
+    lines.push(fmtWpRow(idx, 0, 3, 21, 0, 0, 0, 0, landLat, landLon, 0));
+  }
+
+  return { text: lines.join('\n') + '\n', wpCount: waypoints.length };
+}
+
+function downloadFile(text, filename) {
+  const blob = new Blob([text], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+document.getElementById('conv-btn').addEventListener('click', () => {
+  if (!jsonData) return;
+  try {
+    const result = convertJsonToWaypoints(jsonData);
+    const outName = jsonFileName.replace(/\.json$/i, '.waypoints') || 'mission.waypoints';
+    downloadFile(result.text, outName);
+    document.getElementById('conv-status').textContent = `✓ ${result.wpCount} WPs → ${outName}`;
+    document.getElementById('conv-status').style.color = '#00ff88';
+  } catch (err) {
+    document.getElementById('conv-status').textContent = `✗ ${err.message}`;
+    document.getElementById('conv-status').style.color = '#ff4444';
   }
 });
 
@@ -837,6 +1029,7 @@ document.getElementById('json-input').addEventListener('change', (e) => {
     try {
       const data = JSON.parse(reader.result);
       if (!data.detailedWaypoints) { alert('JSON: no detailedWaypoints'); return; }
+      jsonFileName = file.name;
       loadTrajectory(data, file.name);
     } catch (err) { alert('Invalid JSON: ' + err.message); }
   };
@@ -880,7 +1073,10 @@ viewport.addEventListener('drop', (e) => {
       reader.onload = () => {
         try {
           const data = JSON.parse(reader.result);
-          if (data.detailedWaypoints) loadTrajectory(data, file.name);
+          if (data.detailedWaypoints) {
+            jsonFileName = file.name;
+            loadTrajectory(data, file.name);
+          }
         } catch (_) {}
       };
       reader.readAsText(file);
@@ -931,8 +1127,8 @@ window.addEventListener('resize', () => {
       body: '<b>Left-drag</b> to orbit, <b>right-drag</b> to pan, <b>scroll</b> to zoom. Click on the 3D model to see Unity/NED coordinates. Hover over waypoints for details.' },
     { target: '#toggle-panel', title: 'Layers',
       body: 'Toggle visibility of flight paths, waypoints, ArduPilot missions, and the grid. This panel appears after loading data.' },
-    { target: null, title: 'Convert Panel',
-      body: 'Convert files directly in the browser. <b>JSON \u2192 .waypoints</b> converts VR planner paths to ArduPilot missions. <b>.tlog \u2192 JSON</b> converts Mission Planner telemetry logs. Requires <b>server.py</b>.' },
+    { target: '#convert-panel', title: 'Convert Panel',
+      body: 'Press <b>C</b> to open. Converts VR planner <b>JSON → .waypoints</b> for ArduPilot. Set alt offset and 360° loiter time, then click the button to download.' },
     { target: null, title: 'Keyboard Shortcuts',
       body: 'Quick keys: <b>R</b> reset camera, <b>G</b> grid, <b>T</b> trajectory, <b>W</b> waypoints, <b>A</b> ArduPilot, <b>C</b> convert panel. Press <b>?</b> anytime to replay this tour.' },
   ];
@@ -957,10 +1153,16 @@ window.addEventListener('resize', () => {
     localStorage.setItem('tutorial_done', '1');
   }
 
+  let tutTempShown = null;
+
   function clearHighlight() {
     if (prevHighlight) {
       prevHighlight.classList.remove('tutorial-highlight');
       prevHighlight = null;
+    }
+    if (tutTempShown) {
+      tutTempShown.style.display = 'none';
+      tutTempShown = null;
     }
     navbar.style.zIndex = '100';
   }
@@ -971,7 +1173,12 @@ window.addEventListener('resize', () => {
     clearHighlight();
 
     let targetEl = step.target ? document.querySelector(step.target) : null;
-    if (targetEl && (getComputedStyle(targetEl).display === 'none' || !targetEl.offsetParent)) {
+    // Temporarily show hidden panels for tutorial highlight
+    if (targetEl && getComputedStyle(targetEl).display === 'none') {
+      targetEl.style.display = 'block';
+      tutTempShown = targetEl;
+    }
+    if (targetEl && !targetEl.offsetParent && !navbar.contains(targetEl)) {
       targetEl = null;
     }
 
