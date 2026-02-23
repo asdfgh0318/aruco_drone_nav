@@ -36,7 +36,7 @@ All three can also be loaded via **drag-and-drop** onto the viewport.
 1. Load **GLB** + **JSON** as above (the ground truth)
 2. Run the converter:
    ```bash
-   python3 tools/vr_to_waypoints.py path.json -o path.waypoints -v
+   python3 tools/vr_to_waypoints.py path.json -o path.waypoints --land-unity-y -1.117 -v
    ```
 3. Click **WPL** → select the generated `.waypoints` file
 4. Compare visually: purple ArduPilot diamonds should overlap the JSON colored spheres

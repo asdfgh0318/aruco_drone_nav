@@ -218,19 +218,22 @@ def build_mission(waypoints, args, start_pos=None, end_pos=None, start_alt=None)
         ))
         idx += 1
 
-    # Land at path end position
+    # Land at last waypoint position, at specified floor altitude
     if not args.no_land:
-        if end_pos is not None:
-            land_lat, land_lon = ned_to_latlon(
-                end_pos["z"], end_pos["x"],  # Unity Z=North, X=East
-                args.origin_lat, args.origin_lon,
-            )
+        if waypoints:
+            land_lat = waypoints[-1]["lat"]
+            land_lon = waypoints[-1]["lon"]
         else:
             land_lat, land_lon = args.origin_lat, args.origin_lon
+        # Landing altitude: Unity Y of floor → relative to start_alt
+        if args.land_unity_y is not None and start_alt is not None:
+            land_alt = args.land_unity_y - start_alt
+        else:
+            land_alt = 0  # same floor as takeoff
         lines.append(fmt_row(
             idx, 0, FRAME_GLOBAL_REL_ALT, NAV_LAND,
             0, 0, 0, 0,
-            land_lat, land_lon, 0,
+            land_lat, land_lon, land_alt,
         ))
 
     return lines
@@ -259,6 +262,8 @@ def main():
                         help="Default hold time for FlyThrough waypoints (default: 0.0)")
     parser.add_argument("--record360-time",  type=float, default=30.0,     metavar="FLOAT",
                         help="Loiter time for Record360 waypoints (default: 30.0)")
+    parser.add_argument("--land-unity-y",    type=float, default=None,     metavar="FLOAT",
+                        help="Landing surface Unity Y coordinate (default: same floor as takeoff)")
     parser.add_argument("--no-takeoff",      action="store_true",
                         help="Skip TAKEOFF command")
     parser.add_argument("--no-land",         action="store_true",

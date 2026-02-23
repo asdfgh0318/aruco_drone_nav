@@ -481,7 +481,7 @@ function loadWaypoints(text, fileName) {
     : jsonLoaded ? jsonStartAlt
     : (!isNaN(startAltField) ? startAltField : 0);
 
-  const navPositions = []; // only NAV waypoints for the connecting line
+  const allPositions = []; // all waypoints including T/O and LND for connecting line
   let arduWpIdx = 0;
 
   for (const wp of wps) {
@@ -522,10 +522,7 @@ function loadWaypoints(text, fileName) {
     };
     ardupilotGroup.add(marker);
 
-    // Only include NAV waypoints in the connecting line (skip T/O and LND at origin)
-    if (isNav) {
-      navPositions.push(new THREE.Vector3(sp.x, sp.y, sp.z));
-    }
+    allPositions.push(new THREE.Vector3(sp.x, sp.y, sp.z));
 
     // Yaw cone for nav waypoints
     if (isNav) {
@@ -563,10 +560,10 @@ function loadWaypoints(text, fileName) {
     ardupilotGroup.add(sprite);
   }
 
-  // Connecting line — only NAV waypoints (no T/O or LND at origin)
-  if (navPositions.length > 1) {
+  // Connecting line — full mission path including T/O and LND
+  if (allPositions.length > 1) {
     const linePositions = [];
-    for (const p of navPositions) { linePositions.push(p.x, p.y, p.z); }
+    for (const p of allPositions) { linePositions.push(p.x, p.y, p.z); }
     const lineGeo = new LineGeometry();
     lineGeo.setPositions(linePositions);
     const lineMat = new LineMaterial({
