@@ -91,6 +91,19 @@ def parse_vr_planner(data, args):
         first_wp = wp_by_id[ordered_ids[0]] if ordered_ids else None
         start_alt = first_wp["position"]["y"] if first_wp else 0.0
 
+    # Extract path start/end positions from segments for takeoff/landing
+    start_pos = None
+    end_pos = None
+    if segments:
+        start_pos = segments[0]["fromPos"]
+        # Walk to last segment to get end position
+        for seg in segments:
+            if seg["toId"] == -2:
+                end_pos = seg["toPos"]
+                break
+        if end_pos is None:
+            end_pos = segments[-1]["toPos"]
+
     waypoints = []
     for wid in ordered_ids:
         wp = wp_by_id[wid]
@@ -122,7 +135,9 @@ def parse_vr_planner(data, args):
             "cmd": cmd, "hold": hold, "yaw": yaw,
             "name": name,
         })
-    return waypoints
+
+    return {"waypoints": waypoints, "start_pos": start_pos, "end_pos": end_pos,
+            "start_alt": start_alt}
 
 
 def parse_missions_json(data, args):
@@ -147,7 +162,8 @@ def parse_missions_json(data, args):
             "cmd": NAV_WAYPOINT, "hold": hold, "yaw": yaw,
             "name": "Waypoint",
         })
-    return waypoints
+    return {"waypoints": waypoints, "start_pos": None, "end_pos": None,
+            "start_alt": 0.0}
 
 
 def fmt_row(index, current, frame, cmd, p1, p2, p3, p4, lat, lon, alt, autocont=1):
@@ -158,8 +174,12 @@ def fmt_row(index, current, frame, cmd, p1, p2, p3, p4, lat, lon, alt, autocont=
     )
 
 
-def build_mission(waypoints, args):
+def build_mission(waypoints, args, start_pos=None, end_pos=None, start_alt=None):
     lines = ["QGC WPL 110"]
+
+    # Metadata comment — viewer and tools can parse this to reverse altitude conversion
+    if start_alt is not None:
+        lines.append(f"# ARUCO_NAV start_alt={start_alt:.4f}")
 
     # Home (index 0)
     lines.append(fmt_row(
@@ -170,15 +190,22 @@ def build_mission(waypoints, args):
 
     idx = 1
 
-    # Takeoff — default to first waypoint altitude if not explicitly set
+    # Takeoff at path start position (where drone is physically placed)
     if not args.no_takeoff:
         takeoff_alt = args.takeoff_alt if args.takeoff_alt is not None else (
             waypoints[0]["alt"] if waypoints else 1.5
         )
+        if start_pos is not None:
+            to_lat, to_lon = ned_to_latlon(
+                start_pos["z"], start_pos["x"],  # Unity Z=North, X=East
+                args.origin_lat, args.origin_lon,
+            )
+        else:
+            to_lat, to_lon = args.origin_lat, args.origin_lon
         lines.append(fmt_row(
             idx, 0, FRAME_GLOBAL_REL_ALT, NAV_TAKEOFF,
             0, 0, 0, 0,
-            args.origin_lat, args.origin_lon, takeoff_alt,
+            to_lat, to_lon, takeoff_alt,
         ))
         idx += 1
 
@@ -191,12 +218,19 @@ def build_mission(waypoints, args):
         ))
         idx += 1
 
-    # Land
+    # Land at path end position
     if not args.no_land:
+        if end_pos is not None:
+            land_lat, land_lon = ned_to_latlon(
+                end_pos["z"], end_pos["x"],  # Unity Z=North, X=East
+                args.origin_lat, args.origin_lon,
+            )
+        else:
+            land_lat, land_lon = args.origin_lat, args.origin_lon
         lines.append(fmt_row(
             idx, 0, FRAME_GLOBAL_REL_ALT, NAV_LAND,
             0, 0, 0, 0,
-            args.origin_lat, args.origin_lon, 0,
+            land_lat, land_lon, 0,
         ))
 
     return lines
@@ -244,17 +278,26 @@ def main():
     # Auto-detect format
     if "detailedWaypoints" in data:
         fmt = "VR planner"
-        waypoints = parse_vr_planner(data, args)
+        result = parse_vr_planner(data, args)
     elif "waypoints" in data and "settings" in data:
         fmt = "missions JSON"
-        waypoints = parse_missions_json(data, args)
+        result = parse_missions_json(data, args)
     else:
         print("ERROR: Unrecognised JSON format (expected 'detailedWaypoints' or 'waypoints'+'settings')",
               file=sys.stderr)
         sys.exit(1)
 
+    waypoints = result["waypoints"]
+    start_pos = result["start_pos"]
+    end_pos = result["end_pos"]
+    start_alt = result["start_alt"]
+
     print(f"Format detected: {fmt}")
     print(f"Waypoints loaded: {len(waypoints)}")
+    if start_pos:
+        print(f"Path start (Unity): X={start_pos['x']:.3f} Y={start_pos['y']:.3f} Z={start_pos['z']:.3f}")
+    if end_pos:
+        print(f"Path end   (Unity): X={end_pos['x']:.3f} Y={end_pos['y']:.3f} Z={end_pos['z']:.3f}")
 
     if not waypoints:
         print("WARNING: No waypoints after filtering.", file=sys.stderr)
@@ -283,7 +326,8 @@ def main():
                   f"Use --alt-offset or --fixed-alt to correct.", file=sys.stderr)
 
     # Build and write output
-    lines = build_mission(waypoints, args)
+    lines = build_mission(waypoints, args, start_pos=start_pos, end_pos=end_pos,
+                          start_alt=start_alt)
 
     output_path = Path(args.output) if args.output else input_path.with_suffix(".waypoints")
     output_path.write_text("\n".join(lines) + "\n")
