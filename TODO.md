@@ -32,6 +32,12 @@
 
 ## Completed
 
+### Session 2026-02-23: GLB Viewer Tutorial + Sample Files
+- [x] Interactive tutorial wizard for `tools/glb_viewer.html` (7 steps, spotlight highlights, Back/Next/Skip)
+- [x] Auto-shows on first visit (`localStorage`), replay with `?` key or navbar button
+- [x] Wrapped file buttons and coordinate inputs in groups for clean tutorial targeting
+- [x] Sample mission files added to `viewer/samples/` (JSON, .waypoints, square mission)
+
 ### Session 2026-02-19: Mission & Telemetry Converter Tools
 - [x] `tools/vr_to_waypoints.py` — VR planner JSON → ArduPilot `.waypoints` (QGC WPL 110)
   - Auto-detects VR planner JSON vs missions JSON format
@@ -94,4 +100,4 @@
 
 ---
 
-*Last updated: 2026-02-19 (mission tools added)*
+*Last updated: 2026-02-23*

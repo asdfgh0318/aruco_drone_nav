@@ -100,6 +100,22 @@ curl http://aruconav.local:8001/position
 python3 tools/debug_viewer.py --host aruconav.local --port 8001
 ```
 
+## 3D Mission Viewer
+
+Browser-based tool for visualizing GLB building models with flight paths and ArduPilot missions.
+
+```bash
+# Open directly (static, no server needed)
+xdg-open tools/glb_viewer.html
+
+# Or with convert support (JSON↔waypoints, tlog→JSON)
+python3 server.py
+```
+
+Load **GLB** models, **JSON** VR planner missions, and **.waypoints** ArduPilot files. Drag & drop supported. Sample files included in `viewer/samples/`.
+
+An interactive tutorial (`?` button or `?` key) walks through all features on first visit.
+
 ## Project Structure
 
 ```
@@ -113,6 +129,8 @@ aruco_drone_nav/
 |   +-- camera_params.yaml      # Calibrated camera intrinsics
 |   +-- marker_map.yaml         # Marker world positions (ENU)
 +-- tools/                      # Development & debug tools
+|   +-- glb_viewer.html         # 3D mission viewer (standalone HTML)
++-- viewer/samples/             # Sample mission files for viewer testing
 +-- docs/                       # Documentation + images
 +-- markers/                    # Generated marker PDFs
 ```
@@ -171,4 +189,4 @@ Proprietary - Warsaw University of Technology
 
 ---
 
-*Last updated: 2026-02-09*
+*Last updated: 2026-02-23*

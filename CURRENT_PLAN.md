@@ -65,6 +65,11 @@ GPS_INPUT confirmed: fix=3, sats=12, correct lat/lon.
 - [x] `tools/vr_to_waypoints.py` — VR planner JSON / missions JSON → ArduPilot `.waypoints`
 - [x] `tools/tlog_to_vr_json.py` — Mission Planner `.tlog` → VR planner JSON for path comparison
 
+### 3D Mission Viewer
+- [x] `tools/glb_viewer.html` — Browser-based GLB model + flight path + waypoints viewer
+- [x] Interactive tutorial wizard (7 steps, auto-shows on first visit, `?` to replay)
+- [x] Sample mission files in `viewer/samples/` for testing
+
 ## Next: Hardware Fixes + Flight Testing
 
 ### Immediate (before next flight)
@@ -92,8 +97,10 @@ src/mavlink_bridge.py       (~183 lines) - MAVLink connection + GPS emulation + 
 src/__main__.py             (3 lines)    - Entry point
 tools/vr_to_waypoints.py   (~230 lines) - VR planner JSON → ArduPilot .waypoints
 tools/tlog_to_vr_json.py   (~260 lines) - Mission Planner .tlog → VR planner JSON
+tools/glb_viewer.html      (~1040 lines)- 3D viewer with tutorial wizard
+viewer/samples/                          - Sample mission files for testing
 ```
 
 ---
 
-*Last updated: 2026-02-19*
+*Last updated: 2026-02-23*

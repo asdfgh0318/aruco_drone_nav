@@ -141,6 +141,20 @@ lon = origin_lon + east_m / (111111.0 * cos(origin_lat_rad))
 |------|---------|
 | `tools/vr_to_waypoints.py` | Convert VR planner JSON → ArduPilot `.waypoints` (QGC WPL 110) |
 | `tools/tlog_to_vr_json.py` | Convert Mission Planner `.tlog` → VR planner JSON format |
+| `tools/glb_viewer.html` | 3D mission viewer — GLB models, JSON paths, ArduPilot waypoints |
+
+### 3D Mission Viewer (`tools/glb_viewer.html`)
+
+Standalone HTML/JS viewer using Three.js. No build step required — open directly in a browser or serve via `server.py` for convert features.
+
+**Features:**
+- Load GLB 3D models, VR planner JSON missions, ArduPilot `.waypoints` files
+- Drag & drop support, GPS origin + StartAlt coordinate conversion
+- Layer toggle panel (flight path, waypoints, ArduPilot WPs, grid)
+- Click for Unity/NED coordinates, hover for waypoint details
+- Keyboard shortcuts: R (reset), G (grid), T (trajectory), W (waypoints), A (ArduPilot)
+- Interactive tutorial wizard (7 steps, `?` to replay, auto-shows on first visit)
+- Sample files in `viewer/samples/` for testing
 
 ## Known Issues
 
@@ -152,4 +166,4 @@ YUYV at 720p limited to 10fps. Solution: MJPG format.
 
 ---
 
-*Last updated: 2026-02-09*
+*Last updated: 2026-02-23*
