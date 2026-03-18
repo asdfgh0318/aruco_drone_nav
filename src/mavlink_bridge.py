@@ -137,9 +137,15 @@ class MAVLinkBridge:
             ang_cov, 0,
             ang_cov,
         ]
-        self.conn.mav.vision_position_estimate_send(
-            usec, x, y, z, roll, pitch, yaw, covariance, 0
-        )
+        try:
+            self.conn.mav.vision_position_estimate_send(
+                usec, x, y, z, roll, pitch, yaw, covariance, 0
+            )
+        except TypeError:
+            # Older pymavlink without covariance/reset_counter params
+            self.conn.mav.vision_position_estimate_send(
+                usec, x, y, z, roll, pitch, yaw
+            )
 
     def send_gps_input(self, x_enu, y_enu, z_enu, yaw_deg, origin_lat, origin_lon, origin_alt, confidence=1.0):
         """Send GPS_INPUT emulating a GPS fix from ENU position relative to origin."""

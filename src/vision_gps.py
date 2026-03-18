@@ -106,7 +106,11 @@ class Camera:
 
 def create_detector(dictionary="DICT_4X4_50"):
     aruco_dict = cv2.aruco.getPredefinedDictionary(getattr(cv2.aruco, dictionary))
-    params = cv2.aruco.DetectorParameters()
+    # Support both old (4.x) and new (4.7+) ArUco API
+    if hasattr(cv2.aruco, 'DetectorParameters_create'):
+        params = cv2.aruco.DetectorParameters_create()
+    else:
+        params = cv2.aruco.DetectorParameters()
     params.adaptiveThreshConstant = 7
     params.adaptiveThreshWinSizeMin = 3
     params.adaptiveThreshWinSizeMax = 23
@@ -119,7 +123,10 @@ def create_detector(dictionary="DICT_4X4_50"):
     params.minOtsuStdDev = 5.0
     params.perspectiveRemovePixelPerCell = 4
     params.perspectiveRemoveIgnoredMarginPerCell = 0.13
-    return cv2.aruco.ArucoDetector(aruco_dict, params)
+    if hasattr(cv2.aruco, 'ArucoDetector'):
+        return cv2.aruco.ArucoDetector(aruco_dict, params)
+    # Old API: return (dict, params) tuple, detect() handles the difference
+    return (aruco_dict, params)
 
 
 # Persistent PnP state for temporal consistency (per marker ID)
@@ -136,7 +143,10 @@ def detect(frame, clahe, detector, cam_matrix, dist_coeffs, marker_size):
     t3 = time.perf_counter()
 
     try:
-        corners, ids, _ = detector.detectMarkers(processed)
+        if isinstance(detector, tuple):
+            corners, ids, _ = cv2.aruco.detectMarkers(processed, detector[0], parameters=detector[1])
+        else:
+            corners, ids, _ = detector.detectMarkers(processed)
     except cv2.error as e:
         log.warning(f"Detection error: {e}")
         return [], {}
@@ -180,12 +190,18 @@ def detect(frame, clahe, detector, cam_matrix, dist_coeffs, marker_size):
                 flags=cv2.SOLVEPNP_IPPE_SQUARE)
 
         if ok:
-            _last_pnp[mid_int] = (rvec.copy(), tvec.copy())
             tvec_flat = tvec.flatten()
+            dist = float(np.linalg.norm(tvec_flat))
+            # Sanity check: discard if distance > 10m or rvec explodes
+            if dist > 10.0 or np.any(np.abs(rvec) > 2 * np.pi * 10):
+                # Bad solution — reset temporal state for this marker
+                _last_pnp.pop(mid_int, None)
+                continue
+            _last_pnp[mid_int] = (rvec.copy(), tvec.copy())
             centroid = corners_2d.mean(axis=0)
             detections.append(Detection(
                 mid_int, rvec.flatten(), tvec_flat,
-                float(np.linalg.norm(tvec_flat)), ts, centroid))
+                dist, ts, centroid))
 
     return detections, timing
 
@@ -363,6 +379,9 @@ def main():
     aruco_cfg = cfg.get("aruco", {})
     marker_size = aruco_cfg.get("marker_size_m", 0.18)
 
+    clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
+    detector = create_detector(aruco_cfg.get("dictionary", "DICT_4X4_50"))
+
     camera = Camera(
         device_id=cfg.get("camera", {}).get("device_id", 0),
         width=cfg.get("camera", {}).get("width", 1280),
@@ -371,9 +390,6 @@ def main():
     )
     if not camera.start():
         sys.exit(1)
-
-    clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
-    detector = create_detector(aruco_cfg.get("dictionary", "DICT_4X4_50"))
     loop_period = 1.0 / cfg.get("control", {}).get("loop_rate_hz", 20)
 
     mavlink = None

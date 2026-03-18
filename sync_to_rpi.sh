@@ -3,7 +3,7 @@
 # Usage: ./sync_to_rpi.sh [--dry-run]
 
 RPI_HOST="aruconav.local"
-RPI_HOST_IP="10.59.24.251"  # Fallback IP
+RPI_HOST_IP="10.40.41.251"  # Fallback IP
 RPI_USER="aruconav"
 RPI_PATH="/home/aruconav/aruco_drone_nav"
 LOCAL_PATH="$(dirname "$(realpath "$0")")"
@@ -46,6 +46,19 @@ rsync -avz --progress $DRY_RUN \
     --exclude='*.bag' \
     --exclude='buildroot' \
     --exclude='.claude' \
+    --exclude='*.glb' \
+    --exclude='*.gltf' \
+    --exclude='*.zip' \
+    --exclude='*.tar.gz' \
+    --exclude='*.img.xz' \
+    --exclude='*.csv' \
+    --exclude='*.jpg' \
+    --exclude='*.svg' \
+    --exclude='Copter-*' \
+    --exclude='docs/' \
+    --exclude='markers/' \
+    --exclude='viewer/' \
+    --exclude='missions/' \
     "$LOCAL_PATH/" "${RPI_USER}@${TARGET_HOST}:${RPI_PATH}/"
 
 if [[ $? -eq 0 ]]; then
