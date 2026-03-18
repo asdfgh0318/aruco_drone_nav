@@ -4,7 +4,11 @@
 
 ### Immediate Next Steps
 - [ ] **Investigate althold timeout** — althold worked ~7 min then stopped (vibrations/heat/detection loss?)
-- [ ] **Fix camera mounting** — camera needs proper fixed position relative to drone frame
+  - Reproduce the issue in flight
+  - Add auto-save frame on N consecutive detection failures (capture what camera sees when it fails)
+  - Check RPi CPU temp during flight (`vcgencmd measure_temp`)
+  - Based on captured frame: soft-mount camera if vibration blur, fix focus if shifted
+- [ ] **Fix camera mounting** — soft-mount with vibration dampening if blur confirmed
 - [ ] **Extended flight tests** — multiple flights to characterize reliability
 
 ### Flight Test Sequence
