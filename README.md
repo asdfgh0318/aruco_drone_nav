@@ -6,7 +6,7 @@
 
 **Vision-based GPS emulator for indoor drones using ceiling-mounted ArUco markers**
 
-A minimal Python system (~490 lines) for Raspberry Pi Zero 2W that detects ArUco markers on the ceiling, calculates world-frame position, and sends `VISION_POSITION_ESTIMATE` to an ArduCopter flight controller via MAVLink. The FC handles all navigation, PID control, missions, and failsafes natively.
+A minimal Python system (~500 lines) for Raspberry Pi Zero 2W that detects ArUco markers on the ceiling, calculates world-frame position, and sends `GPS_INPUT` to an ArduCopter flight controller via MAVLink. The FC handles all navigation, PID control, missions, and failsafes natively — barometer handles altitude, vision handles XY position and yaw.
 
 ![Ceiling view from RPi camera showing ArUco marker detection](docs/images/detection_live.jpg)
 *Live camera view from RPi Zero 2W - ArUco marker ID 0 on ceiling at ~1.7m distance*
@@ -22,7 +22,7 @@ A minimal Python system (~490 lines) for Raspberry Pi Zero 2W that detects ArUco
 | Marker Type | Single ArUco (DICT_4X4_50) |
 | Marker Size | 18cm (A4 printable) |
 | Working Distance | 1.5-2.5m |
-| Source Code | ~490 lines (2 files) |
+| Source Code | ~500 lines (2 files) |
 
 ### Timing Breakdown
 ```
@@ -47,9 +47,9 @@ Ceiling Markers ──► USB Camera ──► RPi Zero 2W ──► Flight Cont
                                    - CLAHE preprocess
                                    - ArUco detection
                                    - Position estimation
-                                   - ENU->NED convert
+                                   - ENU->lat/lon convert
                                    mavlink_bridge.py
-                                   - VISION_POSITION_ESTIMATE
+                                   - GPS_INPUT (MAVLink GPS)
 ```
 
 ## Hardware Requirements
@@ -142,18 +142,17 @@ aruco_drone_nav/
 3. **ArUco Detection** - `detectMarkers()` with tuned params for ceiling distance
 4. **Pose Estimation** - `solvePnP()` per marker for 6-DOF pose
 5. **Position Calculation** - Camera → Body → World frame transform
-6. **MAVLink Output** - `VISION_POSITION_ESTIMATE` with covariance
+6. **MAVLink Output** - `GPS_INPUT` with lat/lon/alt/yaw
 
 ## FC Configuration (ArduCopter)
 
 ```
 AHRS_EKF_TYPE = 3      # Use EKF3
-EK3_SRC1_POSXY = 6     # ExternalNav for XY position
-EK3_SRC1_POSZ = 1      # Baro for altitude (safer indoors)
-EK3_SRC1_YAW = 6       # ExternalNav for yaw
-VISO_TYPE = 1           # MAVLink vision
-GPS_TYPE = 0            # Disable GPS (indoor)
-COMPASS_ENABLE = 0      # Disable compass (indoor)
+GPS_TYPE = 14           # MAVLink GPS
+EK3_SRC1_POSXY = 3     # GPS for XY position
+EK3_SRC1_POSZ = 1      # Baro for altitude (reliable indoors)
+EK3_SRC1_YAW = 2       # GPS yaw (or 0 for None)
+VISO_TYPE = 0           # Disabled
 ```
 
 See [docs/FC_CONFIG.md](docs/FC_CONFIG.md) for full parameter list and tuning guide.
@@ -177,6 +176,7 @@ See [docs/FC_CONFIG.md](docs/FC_CONFIG.md) for full parameter list and tuning gu
 
 - **OpenCV CORNER_REFINE_CONTOUR crash**: Rare assertion error, handled by skipping bad frames
 - **Single-threaded detection**: ArUco detect takes ~110ms, limiting FPS to ~6
+- **solvePnP divergence**: ITERATIVE solver can diverge with bad initial guess — sanity check discards results >10m
 
 ## License
 
@@ -189,4 +189,4 @@ Proprietary - Warsaw University of Technology
 
 ---
 
-*Last updated: 2026-02-23*
+*Last updated: 2026-03-18*

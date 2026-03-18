@@ -12,7 +12,7 @@ Ceiling Markers ──► USB Camera ──► RPi Zero 2W ──► Flight Cont
                                    - ArUco detection
                                    - Pose estimation (solvePnP)
                                    - Position calculation
-                                   - VISION_POSITION_ESTIMATE
+                                   - GPS_INPUT (MAVLink GPS emulation)
 ```
 
 ### Source Files
@@ -39,6 +39,11 @@ enhanced = clahe.apply(gray)
 
 ### 3. ArUco Detection
 ```python
+# Old API (OpenCV 4.6.0 on Bookworm):
+params = cv2.aruco.DetectorParameters_create()
+corners, ids, rejected = cv2.aruco.detectMarkers(frame, dictionary, parameters=params)
+
+# New API (OpenCV 4.7+):
 detector = cv2.aruco.ArucoDetector(dictionary, params)
 corners, ids, rejected = detector.detectMarkers(frame)
 ```
@@ -166,4 +171,4 @@ YUYV at 720p limited to 10fps. Solution: MJPG format.
 
 ---
 
-*Last updated: 2026-02-23*
+*Last updated: 2026-03-18*

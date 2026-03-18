@@ -2,18 +2,19 @@
 
 ## Priority: Critical
 
-### Immediate Next Steps (before next flight)
+### Immediate Next Steps
+- [ ] **Investigate althold timeout** — althold worked ~7 min then stopped (vibrations/heat/detection loss?)
 - [ ] **Fix camera mounting** — camera needs proper fixed position relative to drone frame
-- [ ] **Reduce throttle PWM** — drone is overpowered, adjust MOT_THST_HOVER or throttle range
-- [ ] **Retry althold** — after fixing camera mount and throttle
+- [ ] **Extended flight tests** — multiple flights to characterize reliability
 
 ### Flight Test Sequence
 - [x] **Bench test** — GPS_INPUT confirmed (fix=3, sats=12)
-- [x] **EKF convergence** — VISO position displayed in Mission Planner (2026-02-13)
-- [x] **FC params set** — VISO_TYPE=1, EK3_SRC1_POSXY/Z/YAW=6, COMPASS_USE=0, GPS_TYPE=0
-- [ ] **Ground test** — Drone on ground under marker, verify stable position reading
-- [ ] **Tethered hover** — Safety tether, althold mode
-- [ ] **Free hover** — Remove tether, hover under single marker
+- [x] **EKF convergence** — Position displayed in Mission Planner
+- [x] **FC params set** — GPS_TYPE=14, EK3_SRC1_POSXY=3, EK3_SRC1_POSZ=1 (baro)
+- [x] **Throttle reduced** — MOT_THST_HOVER adjusted
+- [x] **Althold hover** — Successful ~7 min hover with GPS emulation + baro altitude
+- [ ] **Loiter mode** — GPS-based position hold
+- [ ] **Extended hover** — 15+ min reliability test
 
 ## Priority: Medium
 
@@ -31,6 +32,17 @@
 - [ ] **Multi-marker deployment** - Multiple ceiling markers for larger area
 
 ## Completed
+
+### Session 2026-03-18: Bookworm Compatibility + GPS Emulation Switch + Althold Flight
+- [x] Fresh RPi Bookworm image flashed and configured (IP: 10.40.41.251)
+- [x] Fixed OpenCV 4.6.0 compatibility (old ArUco API: `DetectorParameters_create` + `detectMarkers`)
+- [x] Fixed segfault: create detector before camera start (OpenCV thread safety)
+- [x] Fixed pymavlink compatibility (fallback for `vision_position_estimate_send` without covariance)
+- [x] Added solvePnP sanity check (discard >10m / diverging rvec, reset temporal state)
+- [x] Switched from VISO to GPS emulation mode (ArduPilot doesn't support Z via visual odometry)
+- [x] FC params: GPS_TYPE=14, EK3_SRC1_POSXY=3, EK3_SRC1_POSZ=1 (baro), VISO_TYPE=0
+- [x] Throttle reduced, althold tested — successful ~7 min hover
+- [x] VISO approach preserved as git tag `viso-experimental`
 
 ### Session 2026-02-23: GLB Viewer Tutorial + Sample Files
 - [x] Interactive tutorial wizard for `tools/glb_viewer.html` (7 steps, spotlight highlights, Back/Next/Skip)
@@ -100,4 +112,4 @@
 
 ---
 
-*Last updated: 2026-02-23*
+*Last updated: 2026-03-18*

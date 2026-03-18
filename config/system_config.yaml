@@ -23,7 +23,7 @@ control:
 vision_server:
   port: 8001                     # HTTP server port for stream mode
 
-gps_emulation: false               # true = send GPS_INPUT (works on any firmware)
+gps_emulation: true                # true = send GPS_INPUT (works on any firmware, baro handles Z)
                                    # false = send VISION_POSITION_ESTIMATE (needs VISO params)
 
 ekf_origin:
