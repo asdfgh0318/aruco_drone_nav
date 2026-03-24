@@ -79,6 +79,10 @@ class Camera:
         self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
         self._cap.set(cv2.CAP_PROP_FPS, self.fps)
         self._cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        # Lock focus at infinity — marker is always >1m, small sensor DOF covers it
+        self._cap.set(cv2.CAP_PROP_AUTOFOCUS, 0)
+        self._cap.set(cv2.CAP_PROP_FOCUS, 0)
+        log.info("Focus locked at infinity")
         self._running = True
         threading.Thread(target=self._capture_loop, daemon=True).start()
         log.info(f"Camera started at {self.width}x{self.height}")

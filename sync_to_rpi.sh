@@ -2,10 +2,10 @@
 # Sync project to Raspberry Pi over WiFi
 # Usage: ./sync_to_rpi.sh [--dry-run]
 
-RPI_HOST="aruconav.local"
+RPI_HOST="pi.local"
 RPI_HOST_IP="10.40.41.251"  # Fallback IP
-RPI_USER="aruconav"
-RPI_PATH="/home/aruconav/aruco_drone_nav"
+RPI_USER="mtj"
+RPI_PATH="/home/mtj/aruco_drone_nav"
 LOCAL_PATH="$(dirname "$(realpath "$0")")"
 
 # Colors
@@ -59,6 +59,8 @@ rsync -avz --progress $DRY_RUN \
     --exclude='markers/' \
     --exclude='viewer/' \
     --exclude='missions/' \
+    --exclude='sdcard_backup/' \
+    --exclude='*.tar' \
     "$LOCAL_PATH/" "${RPI_USER}@${TARGET_HOST}:${RPI_PATH}/"
 
 if [[ $? -eq 0 ]]; then

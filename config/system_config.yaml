@@ -3,7 +3,7 @@
 # FC handles all navigation, PID, missions, and failsafes.
 
 serial:
-  port: "/dev/serial0"          # RPi UART port (or /dev/ttyAMA0)
+  port: "/dev/ttyS0"            # RPi UART port (/dev/ttyS0 on NixOS, /dev/serial0 on Raspbian)
   baud: 115200                   # MAVLink baud rate
 
 camera:
