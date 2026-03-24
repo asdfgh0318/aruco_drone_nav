@@ -23,14 +23,14 @@
 ## Priority: Medium
 
 ### Performance
-- [ ] **Recalibrate camera at 1280x720** — fixes yaw-position coupling from non-uniform scaling
+- [x] **Recalibrate camera at 1280x720** — fixes yaw-position coupling from non-uniform scaling
 - [ ] **FPS optimization at 1280x720** — currently ~3.7 FPS, target 10+
   - Conditional CLAHE (skip when detection succeeds)
   - Detection parameter tuning
   - ROI-based detection near last marker position
 
 ### Robustness
-- [ ] **Camera focus lock** — add to Camera.start() so autofocus is disabled automatically
+- [x] **Camera focus lock** — add to Camera.start() so autofocus is disabled automatically
 
 ### Coverage
 - [ ] **Multi-marker deployment** - Multiple ceiling markers for larger area
