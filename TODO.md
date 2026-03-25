@@ -8,6 +8,12 @@
   - Add auto-save frame on N consecutive detection failures (capture what camera sees when it fails)
   - Check RPi CPU temp during flight (`vcgencmd measure_temp`)
   - Based on captured frame: soft-mount camera if vibration blur, fix focus if shifted
+- [ ] **Calibrate camera level offset** — eliminates bad camera placement
+  - Place drone directly under marker, perfectly level
+  - Record marker center point in camera frame as "true center"
+  - Store as camera mounting offset in config
+  - Add IMU roll/pitch corrections: use IMU to compensate tilt relative to that calibrated center
+  - This way position stays accurate even with imperfect camera mounting
 - [ ] **Fix camera mounting** — soft-mount with vibration dampening if blur confirmed
 - [ ] **Extended flight tests** — multiple flights to characterize reliability
 
