@@ -212,8 +212,8 @@ def detect(frame, clahe, detector, cam_matrix, dist_coeffs, marker_size):
 # --- Position estimation ---
 
 # Camera-to-body fixed rotation (physical mounting, upward-facing camera)
-# Camera top → drone right: cam_X → body_Y, cam_Y → body_X, cam_Z → body_Z
-R_CB = np.array([[0, 1, 0], [1, 0, 0], [0, 0, 1]], dtype=float)
+# cam_-X → body forward, cam_Y → body right, cam_Z → body up
+R_CB = np.array([[-1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=float)
 
 
 def marker_to_world_rotation(orientation_deg):
@@ -224,45 +224,44 @@ def marker_to_world_rotation(orientation_deg):
     return np.array([[c, -s, 0], [s, c, 0], [0, 0, -1]])
 
 
-def estimate_single(detection, marker_cfg, imu_attitude=None):
-    # Rotation from marker frame to camera frame (from solvePnP)
-    R_cm, _ = cv2.Rodrigues(detection.rvec)
-
-    # Camera position in marker frame: correct inverse of solvePnP transform
-    cam_in_marker = (-R_cm.T @ detection.tvec.reshape(3, 1)).flatten()
-
-    # Fixed marker-to-world rotation (marker is glued to ceiling, known pose)
+def estimate_single(detection, marker_cfg):
+    # Assume drone is level (roll=pitch=0). Vision provides XY + yaw only.
+    tvec = detection.tvec
+    marker_pos = np.array(marker_cfg["position"])
     R_mw = marker_to_world_rotation(marker_cfg["orientation"])
 
-    # Drone position in world = marker_world_pos + camera_offset_in_world
-    pos = marker_cfg["position"] + R_mw @ cam_in_marker
-
-    # Yaw from full rotation chain: body→world = R_mw @ R_cm^T @ R_CB^T
+    # Yaw first: extract from rvec rotation
+    R_cm, _ = cv2.Rodrigues(detection.rvec)
     R_bw = R_mw @ R_cm.T @ R_CB.T
-    vision_yaw = np.degrees(np.arctan2(R_bw[1, 0], R_bw[0, 0]))
+    yaw = np.arctan2(R_bw[1, 0], R_bw[0, 0])
 
-    if imu_attitude is not None:
-        drone_yaw = np.degrees(imu_attitude[2])
-    else:
-        drone_yaw = vision_yaw
+    # Position: tvec is in camera frame, which rotates with drone yaw.
+    # R_CB converts camera→body, R_yaw converts body→world (yaw already includes marker orientation)
+    c, s = np.cos(yaw), np.sin(yaw)
+    R_yaw = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
+    cam_offset_world = R_yaw @ R_CB @ (-tvec)
+    pos = marker_pos + cam_offset_world
 
-    return pos, drone_yaw
+    # Convert yaw: R_CB has det=-1 (reflection) making arctan2 CW.
+    # Raw: 0=East, CW. Compass: 0=North, CW. Offset = -90°.
+    yaw_compass = np.degrees(yaw) - 90.0
+    return pos, yaw_compass
 
 
-def estimate_position(detections, marker_map, last_state, cam_matrix, alpha=0.3, imu_attitude=None):
+def estimate_position(detections, marker_map, last_state, cam_matrix, alpha=0.3):
     valid = [(d, marker_map[str(d.marker_id)]) for d in detections if str(d.marker_id) in marker_map]
     if not valid:
         return last_state
 
     if len(valid) == 1:
         d, cfg = valid[0]
-        pos, yaw = estimate_single(d, cfg, imu_attitude)
+        pos, yaw = estimate_single(d, cfg)
         ids = [str(d.marker_id)]
         conf = 1.0
     else:
         positions, yaws, weights, ids = [], [], [], []
         for d, cfg in valid:
-            pos, yaw = estimate_single(d, cfg, imu_attitude)
+            pos, yaw = estimate_single(d, cfg)
             w = 1.0 / (d.distance + 0.1)
             positions.append(pos * w)
             yaws.append((yaw, w))
@@ -426,7 +425,7 @@ def main():
     csv_path = Path(__file__).parent.parent / "debug_log.csv"
     csv_file = open(csv_path, "w")
     csv_file.write("frame,time,marker_id,cx,cy,tvec_x,tvec_y,tvec_z,"
-                   "rvec_x,rvec_y,rvec_z,pos_x,pos_y,pos_z,yaw,imu_roll,imu_pitch,imu_yaw\n")
+                   "rvec_x,rvec_y,rvec_z,pos_x,pos_y,pos_z,yaw\n")
     log.info(f"Debug CSV: {csv_path}")
 
     log.info(f"Running Vision GPS ({args.mode} mode)")
@@ -446,20 +445,18 @@ def main():
 
             if dets:
                 detections_count += 1
-                imu = mavlink.attitude if mavlink else None
-                state = estimate_position(dets, marker_map, last_state, cam_matrix, imu_attitude=imu)
+                state = estimate_position(dets, marker_map, last_state, cam_matrix)
                 if state is not None:
                     last_state = state
                 # Log raw data
                 for d in dets:
-                    ir = f"{imu[0]:.4f},{imu[1]:.4f},{imu[2]:.4f}" if imu else ",,"
                     sp = f"{state.x:.4f},{state.y:.4f},{state.z:.4f},{state.yaw:.2f}" if state else ",,,"
                     csv_file.write(
                         f"{frames},{time.time():.3f},{d.marker_id},"
                         f"{d.centroid[0]:.1f},{d.centroid[1]:.1f},"
                         f"{d.tvec[0]:.4f},{d.tvec[1]:.4f},{d.tvec[2]:.4f},"
                         f"{d.rvec[0]:.4f},{d.rvec[1]:.4f},{d.rvec[2]:.4f},"
-                        f"{sp},{ir}\n")
+                        f"{sp}\n")
                     csv_file.flush()
 
             if args.mode == "run" and state and mavlink:
@@ -477,8 +474,8 @@ def main():
             if args.mode in ("test", "run"):
                 if dets:
                     d = dets[0]
-                    t = d.tvec
-                    r = np.degrees(d.rvec)
+                    t = R_CB @ d.tvec  # Display in body frame (fwd, right, up)
+                    r = np.degrees(R_CB @ d.rvec)
                     print(f"\rtvec:({t[0]:+.2f},{t[1]:+.2f},{t[2]:+.2f}) "
                           f"rvec:({r[0]:+.1f},{r[1]:+.1f},{r[2]:+.1f})° ", end="")
                     if state:
