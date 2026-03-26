@@ -248,7 +248,7 @@ document.addEventListener('keydown', e => {
 });
 
 // Angle gauges
-function drawGauge(canvasId, imuAngle, camAngle, label) {
+function drawGauge(canvasId, imuAngle, camAngle, sumAngle, label) {
   const c = document.getElementById(canvasId);
   const g = c.getContext('2d');
   const w = c.width, h = c.height;
@@ -304,6 +304,17 @@ function drawGauge(canvasId, imuAngle, camAngle, label) {
     g.fillText('CAM ' + camAngle.toFixed(1) + '\u00B0', w - 80, 12);
   }
 
+  // Sum needle (green) — IMU + camera
+  if (sumAngle !== null && sumAngle !== undefined) {
+    const sumRad = Math.PI + (sumAngle + 90) * Math.PI / 180;
+    g.strokeStyle = '#4ade80'; g.lineWidth = 2.5;
+    g.beginPath(); g.moveTo(cx, cy);
+    g.lineTo(cx + Math.cos(sumRad) * (r - 5), cy + Math.sin(sumRad) * (r - 5));
+    g.stroke();
+    g.fillStyle = '#4ade80'; g.font = '11px Consolas';
+    g.fillText('SUM ' + sumAngle.toFixed(1) + '\u00B0', cx - 25, 24);
+  }
+
   // Center dot
   g.fillStyle = '#fff';
   g.beginPath(); g.arc(cx, cy, 3, 0, Math.PI * 2); g.fill();
@@ -318,8 +329,10 @@ function updateGauges(d) {
   const imuRoll = d.imu_roll !== undefined ? d.imu_roll : null;
   const camPitch = d.cam_pitch !== undefined ? d.cam_pitch : null;
   const camRoll = d.cam_roll !== undefined ? d.cam_roll : null;
-  drawGauge('pitch-gauge', imuPitch, camPitch, 'pitch');
-  drawGauge('roll-gauge', imuRoll, camRoll, 'roll');
+  const sumPitch = (imuPitch !== null && camPitch !== null) ? imuPitch + camPitch : null;
+  const sumRoll = (imuRoll !== null && camRoll !== null) ? imuRoll + camRoll : null;
+  drawGauge('pitch-gauge', imuPitch, camPitch, sumPitch, 'pitch');
+  drawGauge('roll-gauge', imuRoll, camRoll, sumRoll, 'roll');
 }
 
 // Auto-connect

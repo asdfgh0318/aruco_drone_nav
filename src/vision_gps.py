@@ -178,36 +178,51 @@ def detect(frame, clahe, detector, cam_matrix, dist_coeffs, marker_size):
         corners_2d = corners[i].reshape(-1, 2)
         mid_int = int(mid)
 
-        # Use previous frame's solution as initial guess (temporal consistency)
-        # This keeps solvePnP near the correct solution frame-to-frame
-        prev = _last_pnp.get(mid_int)
-        if prev is not None:
-            # Temporal consistency: start from previous frame's solution
-            rvec_init, tvec_init = prev
-            ok, rvec, tvec = cv2.solvePnP(
+        # Get both IPPE solutions and pick the physically valid one
+        try:
+            n_solutions, rvecs, tvecs, reproj_errors = cv2.solvePnPGeneric(
                 obj_pts, corners_2d, cam_matrix, dist_coeffs,
-                rvec=rvec_init.copy(), tvec=tvec_init.copy(),
-                useExtrinsicGuess=True,
-                flags=cv2.SOLVEPNP_ITERATIVE)
-        else:
-            # First detection: use IPPE_SQUARE (no initial guess needed)
+                flags=cv2.SOLVEPNP_IPPE_SQUARE)
+        except Exception:
+            # Fallback for older OpenCV without solvePnPGeneric
             ok, rvec, tvec = cv2.solvePnP(
                 obj_pts, corners_2d, cam_matrix, dist_coeffs,
                 flags=cv2.SOLVEPNP_IPPE_SQUARE)
-
-        if ok:
-            tvec_flat = tvec.flatten()
-            dist = float(np.linalg.norm(tvec_flat))
-            # Sanity check: discard if distance > 10m or rvec explodes
-            if dist > 10.0 or np.any(np.abs(rvec) > 2 * np.pi * 10):
-                # Bad solution — reset temporal state for this marker
-                _last_pnp.pop(mid_int, None)
+            if not ok:
                 continue
-            _last_pnp[mid_int] = (rvec.copy(), tvec.copy())
-            centroid = corners_2d.mean(axis=0)
-            detections.append(Detection(
-                mid_int, rvec.flatten(), tvec_flat,
-                dist, ts, centroid))
+            rvecs, tvecs = [rvec], [tvec]
+            n_solutions = 1
+
+        # Filter: marker must be above camera (tvec Z > 0 in camera frame)
+        valid_idx = [j for j in range(n_solutions) if tvecs[j].flatten()[2] > 0]
+        if not valid_idx:
+            continue
+
+        if len(valid_idx) == 1:
+            rvec, tvec = rvecs[valid_idx[0]], tvecs[valid_idx[0]]
+        else:
+            # Two valid solutions — disambiguate by marker Z direction.
+            # Ceiling marker Z axis should point straight down toward camera.
+            # Correct solution: marker Z in camera frame ≈ [0, 0, -1].
+            # Pick the solution where marker Z has smallest XY deviation (most vertical).
+            def marker_z_tilt(idx):
+                R = cv2.Rodrigues(rvecs[idx])[0]
+                mz = R[:, 2]  # marker Z in camera frame
+                return mz[0]**2 + mz[1]**2  # XY magnitude (0 = perfectly vertical)
+            best_idx = min(valid_idx, key=marker_z_tilt)
+            rvec, tvec = rvecs[best_idx], tvecs[best_idx]
+
+        tvec_flat = tvec.flatten()
+        dist = float(np.linalg.norm(tvec_flat))
+        # Sanity check: discard if distance > 10m or rvec explodes
+        if dist > 10.0 or np.any(np.abs(rvec) > 2 * np.pi * 10):
+            _last_pnp.pop(mid_int, None)
+            continue
+        _last_pnp[mid_int] = (rvec.copy(), tvec.copy())
+        centroid = corners_2d.mean(axis=0)
+        detections.append(Detection(
+            mid_int, rvec.flatten(), tvec_flat,
+            dist, ts, centroid))
 
     return detections, timing
 
@@ -219,6 +234,7 @@ R_CB_NOMINAL = np.array([[-1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=float)
 
 # R_CB will be set at startup: R_CB_NOMINAL @ R_tilt (from level calibration)
 R_CB = R_CB_NOMINAL.copy()
+_level_tvec = None  # Set at startup from camera_params.yaml
 
 
 def compute_R_CB(level_tvec):
@@ -262,43 +278,72 @@ def marker_to_world_rotation(orientation_deg):
     return np.array([[c, -s, 0], [s, c, 0], [0, 0, -1]])
 
 
-def estimate_single(detection, marker_cfg):
-    # R_CB (with level calibration tilt correction) + yaw-only body→world.
-    # Level assumption: FC keeps drone nearly level during flight (±2-3°).
+def estimate_single(detection, marker_cfg, imu_attitude=None):
+    # tvec (reliable) + IMU pitch/roll (reliable) + vision yaw (reliable).
+    # R_cm is NOT used for position — only for yaw extraction (Z-rotation is well-conditioned).
     tvec = detection.tvec
     marker_pos = np.array(marker_cfg["position"])
     R_mw = marker_to_world_rotation(marker_cfg["orientation"])
-
-    # Yaw: from vision via NOMINAL R_CB
     R_cm, _ = cv2.Rodrigues(detection.rvec)
+
+    # Yaw: from vision (in-plane rotation is well-conditioned even at perpendicular viewing)
     R_bw = R_mw @ R_cm.T @ R_CB_NOMINAL.T
     yaw = np.arctan2(R_bw[1, 0], R_bw[0, 0])
 
-    # Position: R_CB (tilt-corrected) + yaw-only body→world
-    c, s = np.cos(yaw), np.sin(yaw)
-    R_yaw = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
-    cam_offset_world = R_yaw @ R_CB @ (-tvec)
-    pos = marker_pos + cam_offset_world
+    # Position: angle-based (same math as the stable SUM needle).
+    # Avoids R_CB matrix multiplication (det=-1 breaks IMU correction).
+    cam_ax = np.arctan2(tvec[0], tvec[2])  # marker angle along camera X
+    cam_ay = np.arctan2(tvec[1], tvec[2])  # marker angle along camera Y
+    height = float(np.linalg.norm(tvec))
+
+    if imu_attitude is not None:
+        roll_imu, pitch_imu = imu_attitude[0], imu_attitude[1]
+    else:
+        roll_imu, pitch_imu = 0.0, 0.0
+
+    # Static tilt offset from level calibration (so level+centered = 0)
+    if _level_tvec is not None:
+        level_ax = np.arctan2(_level_tvec[0], _level_tvec[2])
+        level_ay = np.arctan2(_level_tvec[1], _level_tvec[2])
+    else:
+        level_ax, level_ay = 0.0, 0.0
+
+    # World-frame angles: IMU corrects for drone tilt, level cal corrects for camera mount
+    world_ax = pitch_imu + (cam_ax - level_ax)
+    world_ay = roll_imu + (cam_ay - level_ay)
+
+    # Body-frame offset (cam_X = -body_fwd, cam_Y = body_right)
+    body_fwd = -height * np.tan(world_ax)
+    body_right = height * np.tan(world_ay)
+    body_up = -(height - marker_pos[2])
+
+    # Rotate by yaw to world (ENU)
+    cy, sy = np.cos(yaw), np.sin(yaw)
+    pos = marker_pos + np.array([
+        cy * body_fwd - sy * body_right,
+        sy * body_fwd + cy * body_right,
+        body_up,
+    ])
 
     # Convert yaw: R_CB det=-1 (reflection) → arctan2 gives CW from East.
     yaw_compass = np.degrees(yaw) - 90.0
     return pos, yaw_compass
 
 
-def estimate_position(detections, marker_map, last_state, cam_matrix, alpha=0.3):
+def estimate_position(detections, marker_map, last_state, cam_matrix, alpha=0.3, imu_attitude=None):
     valid = [(d, marker_map[str(d.marker_id)]) for d in detections if str(d.marker_id) in marker_map]
     if not valid:
         return last_state
 
     if len(valid) == 1:
         d, cfg = valid[0]
-        pos, yaw = estimate_single(d, cfg)
+        pos, yaw = estimate_single(d, cfg, imu_attitude)
         ids = [str(d.marker_id)]
         conf = 1.0
     else:
         positions, yaws, weights, ids = [], [], [], []
         for d, cfg in valid:
-            pos, yaw = estimate_single(d, cfg)
+            pos, yaw = estimate_single(d, cfg, imu_attitude)
             w = 1.0 / (d.distance + 0.1)
             positions.append(pos * w)
             yaws.append((yaw, w))
@@ -429,9 +474,10 @@ def main():
     cam_matrix, dist_coeffs, level_tvec = load_camera_params(
         config_dir / "camera_params.yaml", target_width=cam_w, target_height=cam_h)
 
-    # Compute R_CB with level calibration correction
-    global R_CB
+    # Level calibration for position estimation
+    global R_CB, _level_tvec
     R_CB = compute_R_CB(level_tvec)
+    _level_tvec = np.array(level_tvec) if level_tvec is not None else None
 
     marker_map = load_marker_map(config_dir / "marker_map.yaml")
     aruco_cfg = cfg.get("aruco", {})
@@ -500,7 +546,8 @@ def main():
 
             if dets:
                 detections_count += 1
-                state = estimate_position(dets, marker_map, last_state, cam_matrix)
+                imu = mavlink.attitude if mavlink else None
+                state = estimate_position(dets, marker_map, last_state, cam_matrix, imu_attitude=imu)
                 if state is not None:
                     last_state = state
                 # Log raw data
