@@ -3,23 +3,23 @@
 ## Architecture
 RPi + Camera = Visual GPS emulator. Detects markers, calculates position, sends GPS_INPUT to FC. FC handles everything else — barometer for altitude, vision for XY and yaw.
 
-## Current Status (2026-03-18)
+## Current Status (2026-03-26)
 
-### System: GPS Emulation Mode (Active)
-Switched from VISION_POSITION_ESTIMATE to GPS_INPUT mode. ArduPilot doesn't properly support Z axis via visual odometry, so altitude is now handled by the barometer (EK3_SRC1_POSZ=1). Vision provides XY position and yaw via GPS_INPUT messages.
+### System: GPS Emulation with IMU-Corrected Position
+GPS_INPUT mode with angle-based position estimation. IMU pitch/roll corrects for drone tilt,
+vision provides yaw and tvec. Camera level calibration removes static mounting tilt.
+solvePnP IPPE ambiguity resolved with marker Z verticality check.
 
-**Althold tested and working** — successful hover with GPS emulation + baro altitude.
+**Position tested stable** when tilting drone ±15°. ArduPilot map matches physical movement.
 
-The VISO approach is preserved as git tag `viso-experimental` for reference.
-
-### Performance on RPi Zero 2W
+### Performance on RPi Zero 2W (NixOS)
 | Metric | Value |
 |--------|-------|
-| Resolution | 1280x720 (scaled from 640x480 calibration) |
-| FPS | ~6 |
-| Detection Rate | 99-100% |
-| XY Precision | ~5mm (stationary) |
-| Z Precision | Baro-based (GPS emulation mode) |
+| Resolution | 1280x720 (native calibration) |
+| FPS | ~7 |
+| Detection Rate | 80-100% |
+| XY Precision | ~10mm (stationary), stable under tilt |
+| GPS_INPUT | hdop=0.3, horiz_acc=0.1m, vert_acc=0.1m |
 
 ### Custom Firmware
 SpeedyBee F405 V3 stock firmware has AP_GPS_MAV compiled out.

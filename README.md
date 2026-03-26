@@ -141,8 +141,8 @@ aruco_drone_nav/
 2. **CLAHE** - Adaptive histogram equalization (clipLimit=2.5, 8x8 tiles)
 3. **ArUco Detection** - `detectMarkers()` with tuned params for ceiling distance
 4. **Pose Estimation** - `solvePnP()` per marker for 6-DOF pose
-5. **Position Calculation** - Camera → Body → World frame transform
-6. **MAVLink Output** - `GPS_INPUT` with lat/lon/alt/yaw
+5. **Position Calculation** - Angle-based: tvec angles + IMU pitch/roll + level calibration → world position
+6. **MAVLink Output** - `GPS_INPUT` with lat/lon/alt/yaw (hdop=0.3, 0.1m accuracy)
 
 ## FC Configuration (ArduCopter)
 
@@ -189,4 +189,4 @@ Proprietary - Warsaw University of Technology
 
 ---
 
-*Last updated: 2026-03-18*
+*Last updated: 2026-03-26*

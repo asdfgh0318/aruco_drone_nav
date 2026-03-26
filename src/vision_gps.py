@@ -564,7 +564,7 @@ def main():
             if args.mode == "run" and state and mavlink:
                 if gps_mode:
                     mavlink.send_gps_input(
-                        x_enu=state.x, y_enu=state.y, z_enu=state.z,
+                        x_enu=state.x, y_enu=-state.y, z_enu=state.z,
                         yaw_deg=state.yaw, origin_lat=origin_lat,
                         origin_lon=origin_lon, origin_alt=origin_alt,
                         confidence=state.confidence)

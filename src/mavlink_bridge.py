@@ -154,8 +154,8 @@ class MAVLinkBridge:
         lat = origin_lat + (y_enu / 111111.0)
         lon = origin_lon + (x_enu / (111111.0 * math.cos(math.radians(origin_lat))))
         alt = origin_alt + z_enu
-        hdop = max(0.5, 1.0 / max(confidence, 0.01))
-        vdop = hdop * 1.5
+        hdop = 0.3
+        vdop = 0.5
         # yaw: GPS_INPUT expects centidegrees, 0=North, CW positive, 0-36000
         yaw_cd = int(((yaw_deg % 360) + 360) % 360 * 100)
         # GPS epoch: Jan 6 1980 00:00:00 UTC
@@ -180,8 +180,8 @@ class MAVLinkBridge:
             0.0,                      # ve (m/s)
             0.0,                      # vd (m/s)
             0.01,                     # speed_accuracy (m/s)
-            max(0.1, 0.5 / max(confidence, 0.01)),  # horiz_accuracy (m)
-            max(0.2, 1.0 / max(confidence, 0.01)),  # vert_accuracy (m)
+            0.1,                      # horiz_accuracy (m)
+            0.1,                      # vert_accuracy (m)
             12,                       # satellites_visible
             yaw_cd,                   # yaw (centidegrees)
         )

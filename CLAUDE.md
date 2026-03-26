@@ -17,7 +17,7 @@ This is mandatory. Code changes without doc updates are incomplete.
 
 **ArUco Vision GPS** — Vision-based GPS emulator for indoor drones. RPi Zero 2W detects ceiling-mounted ArUco markers, calculates world position, and sends `GPS_INPUT` to an ArduCopter FC via MAVLink. Barometer handles altitude; vision handles XY + yaw.
 
-**Status**: Althold flight tested and working (~7 min hover). GPS emulation mode active. VISO approach preserved as git tag `viso-experimental`.
+**Status**: GPS emulation with IMU-corrected position estimation. Althold tested. NixOS RPi. VISO approach preserved as git tag `viso-experimental`.
 
 ## Commands
 
@@ -77,19 +77,25 @@ Frame (1280x720 MJPG)
 - Sends NED pose directly. Requires custom firmware + VISO FC params
 - Tagged as `viso-experimental` — ArduPilot doesn't support Z axis properly via VISO
 
-### Coordinate Transform Chain
+### Position Estimation (Angle-Based with IMU Correction)
 
-The system uses ENU internally. The full transform from solvePnP to world position:
+Position uses tvec angles + IMU pitch/roll (NOT R_cm — too noisy at perpendicular viewing):
 
 ```
-cam_in_marker = -R_cm^T @ tvec          # Invert solvePnP output
-R_CB = [[0,1,0],[1,0,0],[0,0,1]]        # Camera-to-body (upward-facing camera)
-R_mw = marker_to_world_rotation(orient)  # Marker-to-world (ceiling: Z inverted)
-world_pos = marker_pos + R_mw @ cam_in_marker
-yaw = atan2(R_bw[1,0], R_bw[0,0])  where R_bw = R_mw @ R_cm^T @ R_CB^T
+cam_ax = atan2(tvec[0], tvec[2])              # Camera-frame angle along X
+cam_ay = atan2(tvec[1], tvec[2])              # Camera-frame angle along Y
+world_ax = imu_pitch + (cam_ax - level_ax)    # IMU-corrected, static tilt removed
+world_ay = imu_roll + (cam_ay - level_ay)     # Same for roll axis
+body_fwd = -height * tan(world_ax)            # Body offset (cam_X = -body_fwd)
+body_right = height * tan(world_ay)           # Body offset (cam_Y = body_right)
+→ rotate by yaw → ENU world position
 ```
 
-ENU→NED for MAVLink: `ned_x=enu_y, ned_y=enu_x, ned_z=-enu_z`
+Yaw from vision: `R_bw = R_mw @ R_cm^T @ R_CB_NOMINAL^T`, `yaw = atan2(R_bw[1,0], R_bw[0,0])`
+
+### solvePnP Disambiguation
+
+IPPE_SQUARE returns two solutions for flat markers. At near-perpendicular viewing (our case), both have similar reprojection error. Fix: `solvePnPGeneric()` returns both, pick the one with most vertical marker Z in camera frame (`min(mZ_x² + mZ_y²)`).
 
 ### OpenCV API Compatibility
 
@@ -115,7 +121,7 @@ ArduPilot does NOT stream telemetry on non-primary UARTs until it receives heart
 
 ## Hardware
 
-- **RPi**: `aruconav.local` / `10.40.41.251`, user `aruconav`, Bookworm arm64
+- **RPi**: `pi.local` / `10.40.41.251`, user `mtj`, NixOS arm64
 - **Camera**: USB, MJPG 1280×720, must lock autofocus: `v4l2-ctl --set-ctrl focus_automatic_continuous=0,focus_absolute=0`
 - **FC**: SpeedyBee F405 V3, custom firmware, UART at 115200 baud
 - **Markers**: 18cm ArUco (DICT_4X4_50) on A4 paper, ceiling-mounted
@@ -126,6 +132,8 @@ ArduPilot does NOT stream telemetry on non-primary UARTs until it receives heart
 |------|---------|
 | `tools/debug_viewer.py` | Remote frame capture with timing overlay |
 | `tools/terminal_map.py` | Curses live position map (works over SSH) |
+| `tools/live_map.html` | Browser live map with pitch/roll gauges |
+| `tools/calibrate_level.py` | Camera mounting tilt calibration (records tvec under marker) |
 | `tools/glb_viewer.html` | Browser 3D viewer for GLB models + flight paths + waypoints |
 | `tools/vr_to_waypoints.py` | VR planner JSON → ArduPilot `.waypoints` |
 | `tools/tlog_to_vr_json.py` | Mission Planner `.tlog` → VR JSON |
@@ -134,7 +142,8 @@ ArduPilot does NOT stream telemetry on non-primary UARTs until it receives heart
 
 ## Known Issues
 
-- Camera calibrated at 640×480, scaled non-uniformly to 1280×720 → yaw-position coupling (needs recalibration)
 - `CORNER_REFINE_CONTOUR` assertion crash on some frames (caught by try-except)
 - Detection bottleneck: ArUco detect takes ~110ms (79% of frame time)
 - Camera detector must be created BEFORE camera.start() (OpenCV thread safety segfault on Bookworm)
+- solvePnP R_cm is unreliable at near-perpendicular viewing (IPPE ambiguity) — position uses tvec+IMU instead
+- R_CB_NOMINAL has det=-1 (reflection from upward camera) — cannot be used with rotation matrices for IMU correction

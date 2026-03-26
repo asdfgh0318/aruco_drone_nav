@@ -68,7 +68,7 @@ resize();
 
 // World to canvas
 function w2c(wx, wy) {
-  return [cx + wx * scale, cy - wy * scale]; // Y flipped (north=up)
+  return [cx + wy * scale, cy - wx * scale]; // X=fwd=up on screen, Y=right=right on screen
 }
 
 function drawGrid() {
@@ -92,8 +92,8 @@ function drawGrid() {
   ctx.beginPath(); ctx.moveTo(ox, 0); ctx.lineTo(ox, H/devicePixelRatio); ctx.stroke();
   // Labels
   ctx.fillStyle = '#555'; ctx.font = '11px Consolas';
-  ctx.fillText('E +X', W/devicePixelRatio - 40, oy - 5);
-  ctx.fillText('N +Y', ox + 5, 15);
+  ctx.fillText('R +Y', W/devicePixelRatio - 40, oy - 5);
+  ctx.fillText('F +X', ox + 5, 15);
 }
 
 function drawMarkers() {

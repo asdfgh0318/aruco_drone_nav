@@ -8,12 +8,12 @@
   - Add auto-save frame on N consecutive detection failures (capture what camera sees when it fails)
   - Check RPi CPU temp during flight (`vcgencmd measure_temp`)
   - Based on captured frame: soft-mount camera if vibration blur, fix focus if shifted
-- [ ] **Calibrate camera level offset** — eliminates bad camera placement
-  - Place drone directly under marker, perfectly level
-  - Record marker center point in camera frame as "true center"
-  - Store as camera mounting offset in config
-  - Add IMU roll/pitch corrections: use IMU to compensate tilt relative to that calibrated center
-  - This way position stays accurate even with imperfect camera mounting
+- [x] **Calibrate camera level offset + IMU correction** — completed
+  - Level calibration tool records tvec under marker → computes R_tilt
+  - IMU pitch/roll corrects for dynamic drone tilt
+  - Angle-based position estimation (avoids R_cm and improper R_CB)
+  - solvePnPGeneric disambiguation (marker Z verticality check)
+  - Tested: position stable when tilting drone ±15°
 - [ ] **Fix camera mounting** — soft-mount with vibration dampening if blur confirmed
 - [ ] **Extended flight tests** — multiple flights to characterize reliability
 
@@ -42,6 +42,18 @@
 - [ ] **Multi-marker deployment** - Multiple ceiling markers for larger area
 
 ## Completed
+
+### Session 2026-03-26: IMU-Corrected Position + solvePnP Fix + Live Map
+- [x] Discovered solvePnP IPPE ambiguity (two solutions flip randomly at perpendicular viewing)
+- [x] Fixed with solvePnPGeneric + marker Z verticality disambiguator
+- [x] Discovered R_cm is unreliable for position at near-perpendicular viewing
+- [x] Implemented angle-based position estimation: tvec angles + IMU pitch/roll + level calibration
+- [x] Camera level calibration tool (tools/calibrate_level.py) — records tvec for R_tilt computation
+- [x] Browser live map (tools/live_map.html) with pitch/roll/SUM gauges
+- [x] Position pipeline diagram (docs/position_pipeline.html)
+- [x] GPS_INPUT accuracy tuned: hdop=0.3, horiz=0.1m, vert=0.1m
+- [x] Migrated to NixOS RPi (user: mtj, host: pi.local)
+- [x] Camera recalibrated at 1280x720, focus lock at infinity
 
 ### Session 2026-03-18: Bookworm Compatibility + GPS Emulation Switch + Althold Flight
 - [x] Fresh RPi Bookworm image flashed and configured (IP: 10.40.41.251)
