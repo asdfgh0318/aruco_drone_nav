@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>ArUco Drone Live Map</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #1a1a2e; color: #e0e0e0; font-family: 'Consolas', monospace; overflow: hidden; }
+  #top { display: flex; justify-content: space-between; padding: 8px 15px; background: #16213e; border-bottom: 1px solid #333; }
+  #top input { background: #0d1117; color: #e0e0e0; border: 1px solid #444; padding: 4px 8px; border-radius: 4px; width: 220px; }
+  #top button { background: #4a9eff; color: #000; border: none; padding: 5px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; }
+  #top button:hover { background: #7db8ff; }
+  #top .status { font-size: 13px; line-height: 28px; }
+  .ok { color: #4ade80; } .err { color: #ff6b6b; } .warn { color: #ffa500; }
+  #canvas-wrap { position: relative; width: 100vw; height: calc(100vh - 40px); }
+  canvas { display: block; width: 100%; height: 100%; }
+  #stats { position: absolute; bottom: 10px; left: 10px; background: rgba(13,17,23,0.85); padding: 10px 15px; border-radius: 8px; font-size: 13px; line-height: 1.6; border: 1px solid #333; min-width: 200px; }
+  #angles { position: absolute; top: 10px; right: 10px; background: rgba(13,17,23,0.85); padding: 15px; border-radius: 8px; border: 1px solid #333; }
+  #angles canvas { display: block; margin-bottom: 8px; }
+  #angles .label { font-size: 11px; color: #888; text-align: center; margin-bottom: 5px; }
+  #stats .val { color: #7dd3fc; }
+</style>
+</head>
+<body>
+
+<div id="top">
+  <div>
+    <input id="host" type="text" value="10.40.41.251:8001" placeholder="host:port">
+    <button onclick="toggle()">Connect</button>
+  </div>
+  <div class="status" id="status">Disconnected</div>
+</div>
+
+<div id="canvas-wrap">
+  <canvas id="c"></canvas>
+  <div id="stats"></div>
+  <div id="angles">
+    <div class="label">PITCH (side view)</div>
+    <canvas id="pitch-gauge" width="200" height="120"></canvas>
+    <div class="label">ROLL (front view)</div>
+    <canvas id="roll-gauge" width="200" height="120"></canvas>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let W, H, scale = 100; // pixels per meter
+let cx, cy; // canvas center (world origin)
+let trail = [];
+const MAX_TRAIL = 500;
+let drone = null;
+let markers = [{id: 0, x: 0, y: 0}]; // default, could load from config
+let polling = null;
+let lastData = null;
+let panX = 0, panY = 0;
+let dragging = false, dragStart = {x:0, y:0}, panStart = {x:0, y:0};
+
+function resize() {
+  canvas.width = canvas.clientWidth * devicePixelRatio;
+  canvas.height = canvas.clientHeight * devicePixelRatio;
+  W = canvas.width; H = canvas.height;
+  cx = W/2 + panX; cy = H/2 + panY;
+  ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+}
+window.addEventListener('resize', resize);
+resize();
+
+// World to canvas
+function w2c(wx, wy) {
+  return [cx + wx * scale, cy - wy * scale]; // Y flipped (north=up)
+}
+
+function drawGrid() {
+  ctx.strokeStyle = '#222';
+  ctx.lineWidth = 0.5;
+  const step = scale >= 50 ? 1 : (scale >= 20 ? 2 : 5);
+  const left = -cx / scale, right = (W - cx) / scale;
+  const top_ = -(H - cy) / scale, bottom = cy / scale;
+  for (let x = Math.floor(left/step)*step; x <= right; x += step) {
+    const [sx] = w2c(x, 0);
+    ctx.beginPath(); ctx.moveTo(sx, 0); ctx.lineTo(sx, H/devicePixelRatio); ctx.stroke();
+  }
+  for (let y = Math.floor(top_/step)*step; y <= bottom; y += step) {
+    const [, sy] = w2c(0, y);
+    ctx.beginPath(); ctx.moveTo(0, sy); ctx.lineTo(W/devicePixelRatio, sy); ctx.stroke();
+  }
+  // Axes
+  ctx.strokeStyle = '#444'; ctx.lineWidth = 1;
+  const [ox, oy] = w2c(0, 0);
+  ctx.beginPath(); ctx.moveTo(0, oy); ctx.lineTo(W/devicePixelRatio, oy); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(ox, 0); ctx.lineTo(ox, H/devicePixelRatio); ctx.stroke();
+  // Labels
+  ctx.fillStyle = '#555'; ctx.font = '11px Consolas';
+  ctx.fillText('E +X', W/devicePixelRatio - 40, oy - 5);
+  ctx.fillText('N +Y', ox + 5, 15);
+}
+
+function drawMarkers() {
+  markers.forEach(m => {
+    const [sx, sy] = w2c(m.x, m.y);
+    ctx.fillStyle = '#a855f7';
+    ctx.fillRect(sx - 8, sy - 8, 16, 16);
+    ctx.strokeStyle = '#a855f7'; ctx.lineWidth = 1;
+    ctx.strokeRect(sx - 12, sy - 12, 24, 24);
+    ctx.fillStyle = '#ddd'; ctx.font = '11px Consolas';
+    ctx.fillText('M' + m.id, sx + 15, sy + 4);
+  });
+}
+
+function drawTrail() {
+  if (trail.length < 2) return;
+  ctx.beginPath();
+  ctx.strokeStyle = 'rgba(74, 158, 255, 0.4)';
+  ctx.lineWidth = 2;
+  const [sx0, sy0] = w2c(trail[0].x, trail[0].y);
+  ctx.moveTo(sx0, sy0);
+  for (let i = 1; i < trail.length; i++) {
+    const [sx, sy] = w2c(trail[i].x, trail[i].y);
+    ctx.lineTo(sx, sy);
+  }
+  ctx.stroke();
+
+  // Trail dots
+  trail.forEach((p, i) => {
+    if (i % 5 !== 0) return;
+    const [sx, sy] = w2c(p.x, p.y);
+    const alpha = 0.1 + 0.5 * (i / trail.length);
+    ctx.fillStyle = `rgba(74, 158, 255, ${alpha})`;
+    ctx.beginPath(); ctx.arc(sx, sy, 2, 0, Math.PI*2); ctx.fill();
+  });
+}
+
+function drawDrone(x, y, yaw) {
+  const [sx, sy] = w2c(x, y);
+  const rad = -yaw * Math.PI / 180 + Math.PI/2; // compass to canvas angle
+  const size = 18;
+
+  ctx.save();
+  ctx.translate(sx, sy);
+  ctx.rotate(-rad);
+
+  // Body
+  ctx.fillStyle = '#4ade80';
+  ctx.beginPath();
+  ctx.moveTo(0, -size);        // nose
+  ctx.lineTo(-size*0.6, size*0.5);
+  ctx.lineTo(0, size*0.2);
+  ctx.lineTo(size*0.6, size*0.5);
+  ctx.closePath();
+  ctx.fill();
+
+  // Outline
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // Center dot
+  ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.arc(0, 0, 3, 0, Math.PI*2); ctx.fill();
+
+  ctx.restore();
+
+  // Position text
+  ctx.fillStyle = '#4ade80'; ctx.font = '12px Consolas';
+  ctx.fillText(`(${x.toFixed(2)}, ${y.toFixed(2)})`, sx + 22, sy - 5);
+  ctx.fillText(`yaw: ${yaw.toFixed(1)}`, sx + 22, sy + 10);
+}
+
+function draw() {
+  ctx.clearRect(0, 0, W/devicePixelRatio, H/devicePixelRatio);
+  cx = W/(2*devicePixelRatio) + panX;
+  cy = H/(2*devicePixelRatio) + panY;
+  drawGrid();
+  drawMarkers();
+  drawTrail();
+  if (drone) drawDrone(drone.x, drone.y, drone.yaw);
+  requestAnimationFrame(draw);
+}
+draw();
+
+// Polling
+function toggle() {
+  if (polling) { clearInterval(polling); polling = null; document.getElementById('status').innerHTML = '<span class="warn">Stopped</span>'; return; }
+  polling = setInterval(fetchPos, 150);
+  document.getElementById('status').innerHTML = '<span class="ok">Connecting...</span>';
+}
+
+async function fetchPos() {
+  const host = document.getElementById('host').value;
+  try {
+    const r = await fetch(`http://${host}/position`, {signal: AbortSignal.timeout(1000)});
+    const d = await r.json();
+    lastData = d;
+    if (d.x !== undefined) {
+      drone = {x: d.x, y: d.y, z: d.z || 0, yaw: d.yaw || 0};
+      trail.push({x: d.x, y: d.y, t: Date.now()});
+      if (trail.length > MAX_TRAIL) trail.shift();
+    }
+    const det = d.detection_rate !== undefined ? (d.detection_rate * 100).toFixed(0) : '?';
+    const fps = d.timing ? (1000 / parseInt(d.timing.total || 150)).toFixed(1) : '?';
+    document.getElementById('status').innerHTML = `<span class="ok">Connected</span> | FPS: ${fps} | Det: ${det}%`;
+    const t = d.timing || {};
+    const hasPos = d.x !== undefined;
+    const detPct = d.detection_rate !== undefined ? (d.detection_rate * 100).toFixed(0) : '?';
+    const detColor = d.detection_rate > 0.5 ? 'ok' : 'err';
+    document.getElementById('stats').innerHTML =
+      (hasPos ?
+        `  x: <span class="val">${d.x.toFixed(3)}</span> m<br>` +
+        `  y: <span class="val">${d.y.toFixed(3)}</span> m<br>` +
+        `  z: <span class="val">${(d.z||0).toFixed(3)}</span> m<br>` +
+        `yaw: <span class="val">${d.yaw.toFixed(1)}</span> deg<br>` +
+        `conf: <span class="val">${(d.confidence||0).toFixed(2)}</span><br>`
+      : '<span class="err">NO FIX</span><br>') +
+      `<br>` +
+      `det: <span class="${detColor}">${detPct}%</span><br>` +
+      `mkr: <span class="val">${(d.marker_ids||[]).join(', ') || 'none'}</span><br>` +
+      `<br>` +
+      `frames: <span class="val">${d.frame_count||0}</span><br>` +
+      `detections: <span class="val">${d.detection_count||0}</span><br>` +
+      `uptime: <span class="val">${(d.uptime||0).toFixed(0)}s</span><br>` +
+      (Object.keys(t).length ?
+        `<br>timing:<br>` +
+        Object.entries(t).map(([k,v]) => `  ${k}: <span class="val">${v}ms</span>`).join('<br>')
+      : '');
+    updateGauges(d);
+  } catch(e) {
+    document.getElementById('status').innerHTML = `<span class="err">Error: ${e.message}</span>`;
+  }
+}
+
+// Mouse: pan + zoom
+canvas.addEventListener('mousedown', e => { dragging = true; dragStart = {x: e.clientX, y: e.clientY}; panStart = {x: panX, y: panY}; });
+canvas.addEventListener('mousemove', e => { if (!dragging) return; panX = panStart.x + (e.clientX - dragStart.x); panY = panStart.y + (e.clientY - dragStart.y); });
+canvas.addEventListener('mouseup', () => dragging = false);
+canvas.addEventListener('mouseleave', () => dragging = false);
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  const factor = e.deltaY > 0 ? 0.9 : 1.1;
+  scale = Math.max(10, Math.min(500, scale * factor));
+});
+
+// Keyboard
+document.addEventListener('keydown', e => {
+  if (e.key === 'c') { trail = []; } // clear trail
+  if (e.key === 'r') { panX = 0; panY = 0; scale = 100; } // reset view
+  if (e.key === ' ') { toggle(); e.preventDefault(); } // toggle connection
+});
+
+// Angle gauges
+function drawGauge(canvasId, imuAngle, camAngle, label) {
+  const c = document.getElementById(canvasId);
+  const g = c.getContext('2d');
+  const w = c.width, h = c.height;
+  const cx = w/2, cy = h - 15;
+  const r = 45;
+
+  g.clearRect(0, 0, w, h);
+
+  // Arc background
+  g.strokeStyle = '#333'; g.lineWidth = 2;
+  g.beginPath(); g.arc(cx, cy, r, Math.PI, 0); g.stroke();
+
+  // Tick marks
+  g.strokeStyle = '#555'; g.lineWidth = 1;
+  for (let deg = -90; deg <= 90; deg += 15) {
+    const rad = Math.PI + (deg + 90) * Math.PI / 180;
+    const inner = deg % 45 === 0 ? r - 10 : r - 5;
+    g.beginPath();
+    g.moveTo(cx + Math.cos(rad) * inner, cy + Math.sin(rad) * inner);
+    g.lineTo(cx + Math.cos(rad) * r, cy + Math.sin(rad) * r);
+    g.stroke();
+    if (deg % 45 === 0) {
+      g.fillStyle = '#666'; g.font = '9px Consolas';
+      g.fillText(deg + '', cx + Math.cos(rad) * (r + 12) - 8, cy + Math.sin(rad) * (r + 12) + 3);
+    }
+  }
+
+  // Zero line
+  g.strokeStyle = '#444'; g.lineWidth = 1;
+  g.beginPath(); g.moveTo(cx, cy); g.lineTo(cx, cy - r); g.stroke();
+
+  // IMU needle (orange)
+  if (imuAngle !== null && imuAngle !== undefined) {
+    const imuRad = Math.PI + (imuAngle + 90) * Math.PI / 180;
+    g.strokeStyle = '#ffa500'; g.lineWidth = 2.5;
+    g.beginPath(); g.moveTo(cx, cy);
+    g.lineTo(cx + Math.cos(imuRad) * (r - 5), cy + Math.sin(imuRad) * (r - 5));
+    g.stroke();
+    // Label
+    g.fillStyle = '#ffa500'; g.font = '11px Consolas';
+    g.fillText('IMU ' + imuAngle.toFixed(1) + '\u00B0', 5, 12);
+  }
+
+  // Camera needle (cyan)
+  if (camAngle !== null && camAngle !== undefined) {
+    const camRad = Math.PI + (camAngle + 90) * Math.PI / 180;
+    g.strokeStyle = '#00d4ff'; g.lineWidth = 2.5;
+    g.beginPath(); g.moveTo(cx, cy);
+    g.lineTo(cx + Math.cos(camRad) * (r - 5), cy + Math.sin(camRad) * (r - 5));
+    g.stroke();
+    // Label
+    g.fillStyle = '#00d4ff'; g.font = '11px Consolas';
+    g.fillText('CAM ' + camAngle.toFixed(1) + '\u00B0', w - 80, 12);
+  }
+
+  // Center dot
+  g.fillStyle = '#fff';
+  g.beginPath(); g.arc(cx, cy, 3, 0, Math.PI * 2); g.fill();
+
+  // Legend
+  g.fillStyle = '#666'; g.font = '9px Consolas';
+  g.fillText(label, cx - 15, h - 2);
+}
+
+function updateGauges(d) {
+  const imuPitch = d.imu_pitch !== undefined ? d.imu_pitch : null;
+  const imuRoll = d.imu_roll !== undefined ? d.imu_roll : null;
+  const camPitch = d.cam_pitch !== undefined ? d.cam_pitch : null;
+  const camRoll = d.cam_roll !== undefined ? d.cam_roll : null;
+  drawGauge('pitch-gauge', imuPitch, camPitch, 'pitch');
+  drawGauge('roll-gauge', imuRoll, camRoll, 'roll');
+}
+
+// Auto-connect
+setTimeout(toggle, 500);
+</script>
+</body>
+</html>

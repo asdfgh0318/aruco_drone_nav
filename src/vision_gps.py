@@ -262,58 +262,43 @@ def marker_to_world_rotation(orientation_deg):
     return np.array([[c, -s, 0], [s, c, 0], [0, 0, -1]])
 
 
-def estimate_single(detection, marker_cfg, imu_attitude=None):
-    # Yaw from vision, roll/pitch from IMU (if available).
+def estimate_single(detection, marker_cfg):
+    # R_CB (with level calibration tilt correction) + yaw-only body→world.
+    # Level assumption: FC keeps drone nearly level during flight (±2-3°).
     tvec = detection.tvec
     marker_pos = np.array(marker_cfg["position"])
     R_mw = marker_to_world_rotation(marker_cfg["orientation"])
 
-    # Yaw: from vision via NOMINAL R_CB (independent of mounting tilt)
+    # Yaw: from vision via NOMINAL R_CB
     R_cm, _ = cv2.Rodrigues(detection.rvec)
     R_bw = R_mw @ R_cm.T @ R_CB_NOMINAL.T
     yaw = np.arctan2(R_bw[1, 0], R_bw[0, 0])
 
-    # Position: R_CB maps camera→body (includes static tilt correction)
-    body_offset = R_CB @ (-tvec)
-
-    # Body→world rotation: yaw from vision + roll/pitch from IMU
-    cy, sy = np.cos(yaw), np.sin(yaw)
-    if imu_attitude is not None:
-        roll, pitch = imu_attitude[0], imu_attitude[1]
-        cr, sr = np.cos(roll), np.sin(roll)
-        cp, sp = np.cos(pitch), np.sin(pitch)
-        # Rz(yaw) @ Ry(pitch) @ Rx(roll) — full body-to-world rotation
-        R_body_to_world = np.array([
-            [cy*cp,  cy*sp*sr - sy*cr,  cy*sp*cr + sy*sr],
-            [sy*cp,  sy*sp*sr + cy*cr,  sy*sp*cr - cy*sr],
-            [-sp,    cp*sr,             cp*cr],
-        ])
-    else:
-        # No IMU: yaw-only (level assumption fallback)
-        R_body_to_world = np.array([[cy, -sy, 0], [sy, cy, 0], [0, 0, 1]])
-
-    pos = marker_pos + R_body_to_world @ body_offset
+    # Position: R_CB (tilt-corrected) + yaw-only body→world
+    c, s = np.cos(yaw), np.sin(yaw)
+    R_yaw = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
+    cam_offset_world = R_yaw @ R_CB @ (-tvec)
+    pos = marker_pos + cam_offset_world
 
     # Convert yaw: R_CB det=-1 (reflection) → arctan2 gives CW from East.
-    # Compass: CW from North. Offset = -90°.
     yaw_compass = np.degrees(yaw) - 90.0
     return pos, yaw_compass
 
 
-def estimate_position(detections, marker_map, last_state, cam_matrix, alpha=0.3, imu_attitude=None):
+def estimate_position(detections, marker_map, last_state, cam_matrix, alpha=0.3):
     valid = [(d, marker_map[str(d.marker_id)]) for d in detections if str(d.marker_id) in marker_map]
     if not valid:
         return last_state
 
     if len(valid) == 1:
         d, cfg = valid[0]
-        pos, yaw = estimate_single(d, cfg, imu_attitude)
+        pos, yaw = estimate_single(d, cfg)
         ids = [str(d.marker_id)]
         conf = 1.0
     else:
         positions, yaws, weights, ids = [], [], [], []
         for d, cfg in valid:
-            pos, yaw = estimate_single(d, cfg, imu_attitude)
+            pos, yaw = estimate_single(d, cfg)
             w = 1.0 / (d.distance + 0.1)
             positions.append(pos * w)
             yaws.append((yaw, w))
@@ -350,13 +335,16 @@ class PositionServer:
         self._lock = threading.Lock()
         self._server = None
 
-    def update(self, state, frames, detections, debug_frame=None, timing=None):
+    def update(self, state, frames, detections, debug_frame=None, timing=None,
+               imu_attitude=None, cam_angles=None):
         with self._lock:
             self.state = state
             self.stats["frames"] = frames
             self.stats["detections"] = detections
             if timing:
                 self.stats["timing"] = timing
+            self.stats["imu"] = imu_attitude
+            self.stats["cam_angles"] = cam_angles
             if debug_frame is not None:
                 _, jpg = cv2.imencode(".jpg", debug_frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
                 self.frame_jpeg = jpg.tobytes()
@@ -372,6 +360,14 @@ class PositionServer:
                 base.update({"x": round(s.x, 3), "y": round(s.y, 3), "z": round(s.z, 3),
                              "yaw": round(s.yaw, 1), "marker_ids": s.marker_ids,
                              "confidence": round(s.confidence, 2)})
+            imu = st.get("imu")
+            if imu:
+                base["imu_roll"] = round(np.degrees(imu[0]), 2)
+                base["imu_pitch"] = round(np.degrees(imu[1]), 2)
+            cam = st.get("cam_angles")
+            if cam:
+                base["cam_pitch"] = round(cam[0], 2)
+                base["cam_roll"] = round(cam[1], 2)
             return json.dumps(base)
 
     def start(self):
@@ -398,7 +394,9 @@ class PositionServer:
                         self.send_error(503)
                 else:
                     self.send_error(404)
-        self._server = HTTPServer(("0.0.0.0", self.port), H)
+        class ReusableHTTPServer(HTTPServer):
+            allow_reuse_address = True
+        self._server = ReusableHTTPServer(("0.0.0.0", self.port), H)
         threading.Thread(target=self._server.serve_forever, daemon=True).start()
         log.info(f"Position server on port {self.port}")
 
@@ -502,8 +500,7 @@ def main():
 
             if dets:
                 detections_count += 1
-                imu = mavlink.attitude if mavlink else None
-                state = estimate_position(dets, marker_map, last_state, cam_matrix, imu_attitude=imu)
+                state = estimate_position(dets, marker_map, last_state, cam_matrix)
                 if state is not None:
                     last_state = state
                 # Log raw data
@@ -538,16 +535,21 @@ def main():
                           f"rvec:({r[0]:+.1f},{r[1]:+.1f},{r[2]:+.1f})° ", end="")
                     if state:
                         print(f"pos:({state.x:+.2f},{state.y:+.2f},{state.z:.2f}) "
-                              f"yaw:{state.yaw:+.1f} conf:{state.confidence:.2f}", end="")
-                        if imu:
-                            print(f" imu:({np.degrees(imu[0]):+.1f},{np.degrees(imu[1]):+.1f})", end="")
-                        else:
-                            print(" NO_IMU", end="")
-                        print("  ", end="")
+                              f"yaw:{state.yaw:+.1f} conf:{state.confidence:.2f}", end="  ")
                 else:
                     print("\rNo markers" + " " * 60, end="")
 
-            server.update(state, frames, detections_count, frame, timing)
+            # Camera-observed angles: pitch/roll of marker from vertical in camera frame
+            cam_angles = None
+            if dets:
+                t = dets[0].tvec
+                # Pitch: forward/back tilt = atan2(tx, tz), Roll: left/right = atan2(ty, tz)
+                cam_pitch = np.degrees(np.arctan2(t[0], t[2]))
+                cam_roll = np.degrees(np.arctan2(t[1], t[2]))
+                cam_angles = (cam_pitch, cam_roll)
+            imu = mavlink.attitude if mavlink else None
+            server.update(state, frames, detections_count, frame, timing,
+                         imu_attitude=imu, cam_angles=cam_angles)
 
             elapsed = time.time() - t_start
             if elapsed < loop_period:
