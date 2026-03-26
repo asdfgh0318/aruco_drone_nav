@@ -262,43 +262,58 @@ def marker_to_world_rotation(orientation_deg):
     return np.array([[c, -s, 0], [s, c, 0], [0, 0, -1]])
 
 
-def estimate_single(detection, marker_cfg):
-    # Assume drone is level (roll=pitch=0). Vision provides XY + yaw only.
+def estimate_single(detection, marker_cfg, imu_attitude=None):
+    # Yaw from vision, roll/pitch from IMU (if available).
     tvec = detection.tvec
     marker_pos = np.array(marker_cfg["position"])
     R_mw = marker_to_world_rotation(marker_cfg["orientation"])
 
-    # Yaw: use NOMINAL R_CB (no tilt correction — yaw is independent of mounting pitch/roll)
+    # Yaw: from vision via NOMINAL R_CB (independent of mounting tilt)
     R_cm, _ = cv2.Rodrigues(detection.rvec)
     R_bw = R_mw @ R_cm.T @ R_CB_NOMINAL.T
     yaw = np.arctan2(R_bw[1, 0], R_bw[0, 0])
 
-    # Position: R_CB includes tilt correction, maps tilted camera frame → body frame correctly
-    c, s = np.cos(yaw), np.sin(yaw)
-    R_yaw = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
-    cam_offset_world = R_yaw @ R_CB @ (-tvec)
-    pos = marker_pos + cam_offset_world
+    # Position: R_CB maps camera→body (includes static tilt correction)
+    body_offset = R_CB @ (-tvec)
 
-    # Convert yaw: R_CB has det=-1 (reflection) making arctan2 CW.
-    # Raw: 0=East, CW. Compass: 0=North, CW. Offset = -90°.
+    # Body→world rotation: yaw from vision + roll/pitch from IMU
+    cy, sy = np.cos(yaw), np.sin(yaw)
+    if imu_attitude is not None:
+        roll, pitch = imu_attitude[0], imu_attitude[1]
+        cr, sr = np.cos(roll), np.sin(roll)
+        cp, sp = np.cos(pitch), np.sin(pitch)
+        # Rz(yaw) @ Ry(pitch) @ Rx(roll) — full body-to-world rotation
+        R_body_to_world = np.array([
+            [cy*cp,  cy*sp*sr - sy*cr,  cy*sp*cr + sy*sr],
+            [sy*cp,  sy*sp*sr + cy*cr,  sy*sp*cr - cy*sr],
+            [-sp,    cp*sr,             cp*cr],
+        ])
+    else:
+        # No IMU: yaw-only (level assumption fallback)
+        R_body_to_world = np.array([[cy, -sy, 0], [sy, cy, 0], [0, 0, 1]])
+
+    pos = marker_pos + R_body_to_world @ body_offset
+
+    # Convert yaw: R_CB det=-1 (reflection) → arctan2 gives CW from East.
+    # Compass: CW from North. Offset = -90°.
     yaw_compass = np.degrees(yaw) - 90.0
     return pos, yaw_compass
 
 
-def estimate_position(detections, marker_map, last_state, cam_matrix, alpha=0.3):
+def estimate_position(detections, marker_map, last_state, cam_matrix, alpha=0.3, imu_attitude=None):
     valid = [(d, marker_map[str(d.marker_id)]) for d in detections if str(d.marker_id) in marker_map]
     if not valid:
         return last_state
 
     if len(valid) == 1:
         d, cfg = valid[0]
-        pos, yaw = estimate_single(d, cfg)
+        pos, yaw = estimate_single(d, cfg, imu_attitude)
         ids = [str(d.marker_id)]
         conf = 1.0
     else:
         positions, yaws, weights, ids = [], [], [], []
         for d, cfg in valid:
-            pos, yaw = estimate_single(d, cfg)
+            pos, yaw = estimate_single(d, cfg, imu_attitude)
             w = 1.0 / (d.distance + 0.1)
             positions.append(pos * w)
             yaws.append((yaw, w))
@@ -487,7 +502,8 @@ def main():
 
             if dets:
                 detections_count += 1
-                state = estimate_position(dets, marker_map, last_state, cam_matrix)
+                imu = mavlink.attitude if mavlink else None
+                state = estimate_position(dets, marker_map, last_state, cam_matrix, imu_attitude=imu)
                 if state is not None:
                     last_state = state
                 # Log raw data
@@ -522,7 +538,12 @@ def main():
                           f"rvec:({r[0]:+.1f},{r[1]:+.1f},{r[2]:+.1f})° ", end="")
                     if state:
                         print(f"pos:({state.x:+.2f},{state.y:+.2f},{state.z:.2f}) "
-                              f"yaw:{state.yaw:+.1f} conf:{state.confidence:.2f}", end="  ")
+                              f"yaw:{state.yaw:+.1f} conf:{state.confidence:.2f}", end="")
+                        if imu:
+                            print(f" imu:({np.degrees(imu[0]):+.1f},{np.degrees(imu[1]):+.1f})", end="")
+                        else:
+                            print(" NO_IMU", end="")
+                        print("  ", end="")
                 else:
                     print("\rNo markers" + " " * 60, end="")
 
