@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Position Estimation Pipeline</title>
+<style>
+  body { font-family: 'Segoe UI', Arial, sans-serif; background: #1a1a2e; color: #e0e0e0; margin: 20px; }
+  h1 { color: #00d4ff; text-align: center; }
+  h2 { color: #ffa500; margin-top: 40px; }
+  .pipeline { display: flex; flex-direction: column; align-items: center; gap: 0; max-width: 900px; margin: 0 auto; }
+  .box {
+    border: 2px solid #555; border-radius: 10px; padding: 15px 25px;
+    width: 80%; text-align: center; position: relative;
+  }
+  .box.input { background: #1e3a5f; border-color: #4a9eff; }
+  .box.process { background: #2d1f3d; border-color: #a855f7; }
+  .box.output { background: #1f3d2d; border-color: #4ade80; }
+  .box.config { background: #3d2d1f; border-color: #ffa500; }
+  .box.problem { background: #3d1f1f; border-color: #ff4444; }
+  .arrow { font-size: 28px; color: #666; margin: 5px 0; }
+  .label { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 5px; }
+  .code { font-family: 'Consolas', monospace; font-size: 13px; color: #7dd3fc; background: #0d1117; padding: 8px 12px; border-radius: 5px; margin: 8px 0; display: inline-block; text-align: left; }
+  .note { font-size: 12px; color: #999; font-style: italic; margin-top: 5px; }
+  .split { display: flex; gap: 20px; width: 80%; }
+  .split .box { flex: 1; width: auto; }
+  .highlight { color: #ffd700; font-weight: bold; }
+  .problem-text { color: #ff6b6b; }
+  .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: bold; margin: 2px; }
+  .tag.cam { background: #1e3a5f; color: #4a9eff; }
+  .tag.body { background: #3d2d1f; color: #ffa500; }
+  .tag.world { background: #1f3d2d; color: #4ade80; }
+  .tag.marker { background: #2d1f3d; color: #a855f7; }
+  .section { border: 1px dashed #444; border-radius: 15px; padding: 20px; margin: 30px auto; max-width: 950px; }
+  .section-title { color: #00d4ff; font-size: 14px; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 15px; }
+</style>
+</head>
+<body>
+
+<h1>ArUco Vision GPS - Position Estimation Pipeline</h1>
+
+<div class="section">
+<div class="section-title">Step 1: Camera Capture + ArUco Detection</div>
+<div class="pipeline">
+  <div class="box input">
+    <div class="label">Camera Input</div>
+    <b>USB Camera (1280x720 MJPG)</b>
+    <div class="code">cap.read() → frame (BGR)</div>
+    <div class="note">Threaded capture, single buffer, focus locked at infinity</div>
+  </div>
+  <div class="arrow">↓</div>
+  <div class="box process">
+    <div class="label">Preprocessing</div>
+    <b>Gray → CLAHE → BGR</b>
+    <div class="code">gray → clahe.apply(gray) → cvtColor(enhanced, BGR)</div>
+    <div class="note">~25ms — adaptive contrast for robust detection</div>
+  </div>
+  <div class="arrow">↓</div>
+  <div class="box process">
+    <div class="label">ArUco Detection</div>
+    <b>detectMarkers() → corners, ids</b>
+    <div class="code">corners = [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]  # pixel coords</div>
+    <div class="note">~85ms — bottleneck. Old API (4.6) + New API (4.9) supported</div>
+  </div>
+</div>
+</div>
+
+<div class="section">
+<div class="section-title">Step 2: solvePnP → Raw Pose</div>
+<div class="pipeline">
+  <div class="box process">
+    <div class="label">Pose Estimation</div>
+    <b>cv2.solvePnP(obj_pts, corners, cam_matrix, dist_coeffs)</b>
+    <div class="code">→ rvec (3x1 axis-angle), tvec (3x1 translation)</div>
+    <div class="note">
+      Uses camera_params.yaml intrinsics (fx, fy, cx, cy + distortion)<br>
+      Temporal consistency: IPPE_SQUARE first frame, ITERATIVE thereafter<br>
+      Sanity check: discard if distance > 10m or rvec explodes
+    </div>
+  </div>
+  <div class="arrow">↓</div>
+  <div class="split">
+    <div class="box input">
+      <div class="label">tvec <span class="tag cam">camera frame</span></div>
+      <b>Marker position in camera frame</b>
+      <div class="code">tvec = [x, y, z] meters</div>
+      <div class="note">
+        Camera frame (OpenCV):<br>
+        X = right in image<br>
+        Y = down in image<br>
+        Z = optical axis (toward marker = UP)
+      </div>
+    </div>
+    <div class="box input">
+      <div class="label">rvec <span class="tag cam">camera frame</span></div>
+      <b>Marker rotation in camera frame</b>
+      <div class="code">R_cm = Rodrigues(rvec)  # 3x3 matrix</div>
+      <div class="note">Transforms points FROM marker TO camera frame</div>
+    </div>
+  </div>
+</div>
+</div>
+
+<div class="section">
+<div class="section-title">Step 3: Position Estimation (estimate_single)</div>
+<div class="pipeline">
+
+  <div class="box config">
+    <div class="label">Config Loaded at Startup</div>
+    <div style="display: flex; gap: 15px; justify-content: center; flex-wrap: wrap;">
+      <div class="code">
+R_CB_NOMINAL = [[-1, 0, 0],<br>
+&nbsp;               [ 0, 1, 0],<br>
+&nbsp;               [ 0, 0, 1]]<br>
+<span style="color:#999"># cam_-X → body fwd</span><br>
+<span style="color:#999"># cam_Y → body right</span><br>
+<span style="color:#999"># cam_Z → body up</span><br>
+<span style="color:#999"># det = -1 (reflection)</span>
+      </div>
+      <div class="code">
+R_CB = R_CB_NOMINAL @ R_tilt<br>
+<br>
+<span style="color:#999"># R_tilt from level calibration</span><br>
+<span style="color:#999"># tilt_y = atan(-dx / fx)</span><br>
+<span style="color:#999"># tilt_x = atan(-dy / fy)</span><br>
+<span style="color:#999"># R_tilt = Ry(tilt_y) @ Rx(tilt_x)</span>
+      </div>
+      <div class="code">
+R_mw = marker_to_world(orient)<br>
+<br>
+= [[cos, -sin, 0],<br>
+&nbsp;  [sin,  cos, 0],<br>
+&nbsp;  [  0,    0, <span style="color:#ff6b6b">-1</span>]]<br>
+<span style="color:#999"># Z flipped: ceiling marker</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow">↓</div>
+
+  <div class="box process">
+    <div class="label">De-tilt tvec <span class="tag cam">camera frame</span> → <span class="tag cam">ideal camera frame</span></div>
+    <b>tvec = (R_CB_NOMINAL.T @ R_CB) @ detection.tvec</b>
+    <div class="code">R_CB_NOMINAL.T @ R_CB = R_CB_NOMINAL.T @ R_CB_NOMINAL @ R_tilt = I @ R_tilt = R_tilt</div>
+    <div class="note">Rotates tvec from tilted camera frame to what it would be if camera were perfectly vertical</div>
+  </div>
+
+  <div class="arrow">↓</div>
+
+  <div class="box process">
+    <div class="label">Extract Yaw <span class="tag cam">camera</span> → <span class="tag world">world</span></div>
+    <b>R_bw = R_mw @ R_cm.T @ R_CB_NOMINAL.T</b>
+    <div class="code">yaw = atan2(R_bw[1,0], R_bw[0,0])</div>
+    <div class="note">
+      Uses R_CB_NOMINAL (no tilt) — yaw is independent of camera mounting pitch/roll<br>
+      R_bw chain: body → camera (R_CB.T) → marker (R_cm.T) → world (R_mw)<br>
+      <b>det(R_bw) = -1</b> due to R_CB reflection → arctan2 gives CW angles
+    </div>
+  </div>
+
+  <div class="arrow">↓</div>
+
+  <div class="box process">
+    <div class="label">Build Yaw Rotation</div>
+    <div class="code">R_yaw = [[cos(yaw), -sin(yaw), 0],<br>
+&nbsp;         [sin(yaw),  cos(yaw), 0],<br>
+&nbsp;         [       0,         0, 1]]</div>
+  </div>
+
+  <div class="arrow">↓</div>
+
+  <div class="box process">
+    <div class="label">Position Chain <span class="tag cam">camera</span> → <span class="tag body">body</span> → <span class="tag world">world</span></div>
+    <b>cam_offset_world = R_yaw @ R_CB_NOMINAL @ (-tvec)</b>
+    <div class="code">
+-tvec           → camera offset from marker <span class="tag cam">camera frame</span><br>
+R_CB_NOMINAL @  → convert to body frame     <span class="tag body">body frame</span><br>
+R_yaw @         → rotate to world           <span class="tag world">world frame</span>
+    </div>
+  </div>
+
+  <div class="arrow">↓</div>
+
+  <div class="box output">
+    <div class="label">World Position <span class="tag world">ENU</span></div>
+    <b>pos = marker_world_pos + cam_offset_world</b>
+    <div class="code">pos = [x_east, y_north, z_up]  # meters, ENU</div>
+    <div class="note">marker_world_pos from marker_map.yaml</div>
+  </div>
+
+  <div class="arrow">↓</div>
+
+  <div class="box process">
+    <div class="label">Yaw Convention</div>
+    <b>yaw_compass = degrees(yaw) - 90</b>
+    <div class="code">
+atan2 with det=-1 R_bw → CW from East (0=East, 90=South)<br>
+Compass convention    → CW from North (0=North, 90=East)<br>
+Offset = -90°
+    </div>
+  </div>
+</div>
+</div>
+
+<div class="section">
+<div class="section-title">Step 4: Output to Flight Controller</div>
+<div class="pipeline">
+  <div class="box output">
+    <div class="label">GPS_INPUT (MAVLink)</div>
+    <b>ENU → lat/lon + yaw centidegrees</b>
+    <div class="code">
+lat = origin_lat + (y_north / 111111.0)<br>
+lon = origin_lon + (x_east / (111111.0 * cos(origin_lat)))<br>
+alt = origin_alt + z_up<br>
+yaw_cd = yaw_compass * 100  # centidegrees, 0=North CW
+    </div>
+    <div class="note">FC params: GPS_TYPE=14, EK3_SRC1_POSXY=3, EK3_SRC1_POSZ=1 (baro)</div>
+  </div>
+</div>
+</div>
+
+<div class="section" style="border-color: #ff4444;">
+<div class="section-title" style="color: #ff4444;">Known Issues / Current Problem</div>
+<div class="pipeline">
+  <div class="box problem">
+    <div class="label">Camera Tilt = 10° Horizontal</div>
+    <b class="problem-text">Position drifts ~0.6m when drone rotates in place</b>
+    <div class="note">
+      <b>Root cause:</b> With 10° camera tilt, the "level assumption" breaks down.<br>
+      solvePnP computes tvec in the TILTED camera frame. The de-tilt R_tilt correction<br>
+      only rotates the vector but can't undo the perspective distortion at 10°.<br><br>
+      <b>The original formula (before simplification) handled this correctly:</b><br>
+    </div>
+    <div class="code" style="color: #4ade80;">
+cam_in_marker = -R_cm.T @ tvec  <span style="color:#999"># Full rotation, handles any tilt</span><br>
+pos = marker_pos + R_mw @ cam_in_marker
+    </div>
+    <div class="note">
+      <b>Options:</b><br>
+      A) Revert to full R_cm for position (abandon level assumption)<br>
+      B) Fix the physical camera mount to reduce tilt<br>
+      C) Use IMU pitch/roll to build a more accurate rotation for tvec
+    </div>
+  </div>
+</div>
+</div>
+
+<div class="section">
+<div class="section-title">Frame Reference</div>
+<table style="margin: 0 auto; border-collapse: collapse;">
+  <tr style="border-bottom: 1px solid #444;">
+    <th style="padding: 8px 15px; text-align: left;">Frame</th>
+    <th style="padding: 8px 15px;">X</th>
+    <th style="padding: 8px 15px;">Y</th>
+    <th style="padding: 8px 15px;">Z</th>
+  </tr>
+  <tr><td style="padding: 8px 15px;"><span class="tag cam">Camera (OpenCV)</span></td><td style="padding: 8px 15px;">Right in image</td><td style="padding: 8px 15px;">Down in image</td><td style="padding: 8px 15px;">Optical axis (up)</td></tr>
+  <tr><td style="padding: 8px 15px;"><span class="tag body">Body (Drone)</span></td><td style="padding: 8px 15px;">Forward</td><td style="padding: 8px 15px;">Right</td><td style="padding: 8px 15px;">Up</td></tr>
+  <tr><td style="padding: 8px 15px;"><span class="tag world">World (ENU)</span></td><td style="padding: 8px 15px;">East</td><td style="padding: 8px 15px;">North</td><td style="padding: 8px 15px;">Up</td></tr>
+  <tr><td style="padding: 8px 15px;"><span class="tag marker">Marker (ceiling)</span></td><td style="padding: 8px 15px;">Marker X</td><td style="padding: 8px 15px;">Marker Y</td><td style="padding: 8px 15px;">Out of face (DOWN)</td></tr>
+</table>
+</div>
+
+</body>
+</html>

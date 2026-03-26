@@ -41,7 +41,9 @@ def load_camera_params(path, target_width=None, target_height=None):
             matrix[1, 1] *= sy  # fy
             matrix[1, 2] *= sy  # cy
             log.info(f"Scaled camera matrix from {cal_w}x{cal_h} to {target_width}x{target_height}")
-    return matrix, coeffs
+    # Load level calibration tvec if present
+    level_tvec = data.get("level_tvec")
+    return matrix, coeffs, level_tvec
 
 
 def load_marker_map(path):
@@ -211,9 +213,45 @@ def detect(frame, clahe, detector, cam_matrix, dist_coeffs, marker_size):
 
 # --- Position estimation ---
 
-# Camera-to-body fixed rotation (physical mounting, upward-facing camera)
+# Nominal camera-to-body rotation (physical mounting, upward-facing camera)
 # cam_-X → body forward, cam_Y → body right, cam_Z → body up
-R_CB = np.array([[-1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=float)
+R_CB_NOMINAL = np.array([[-1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=float)
+
+# R_CB will be set at startup: R_CB_NOMINAL @ R_tilt (from level calibration)
+R_CB = R_CB_NOMINAL.copy()
+
+
+def compute_R_CB(level_tvec):
+    """Compute R_CB including camera tilt correction from level calibration.
+
+    level_tvec: [x, y, z] tvec recorded when drone is directly under marker, level.
+    R_tilt is the rotation that maps this tvec to [0, 0, |tvec|] (straight up).
+    """
+    if level_tvec is None:
+        log.info("No level calibration — using nominal R_CB")
+        return R_CB_NOMINAL.copy()
+
+    tvec = np.array(level_tvec)
+    v1 = tvec / np.linalg.norm(tvec)
+    v2 = np.array([0.0, 0.0, 1.0])  # ideal: marker straight up in camera frame
+
+    axis = np.cross(v1, v2)
+    axis_norm = np.linalg.norm(axis)
+    if axis_norm < 1e-10:
+        log.info("Level calibration: camera already vertical, no tilt correction")
+        return R_CB_NOMINAL.copy()
+
+    axis = axis / axis_norm
+    angle = np.arccos(np.clip(np.dot(v1, v2), -1, 1))
+
+    # Rodrigues formula: rotation matrix from axis-angle
+    K = np.array([[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]])
+    R_tilt = np.eye(3) + np.sin(angle) * K + (1 - np.cos(angle)) * (K @ K)
+
+    R = R_CB_NOMINAL @ R_tilt
+    log.info(f"Level calibration: tilt={np.degrees(angle):.1f}deg "
+             f"axis=({axis[0]:.3f}, {axis[1]:.3f}, {axis[2]:.3f})")
+    return R
 
 
 def marker_to_world_rotation(orientation_deg):
@@ -230,13 +268,12 @@ def estimate_single(detection, marker_cfg):
     marker_pos = np.array(marker_cfg["position"])
     R_mw = marker_to_world_rotation(marker_cfg["orientation"])
 
-    # Yaw first: extract from rvec rotation
+    # Yaw: use NOMINAL R_CB (no tilt correction — yaw is independent of mounting pitch/roll)
     R_cm, _ = cv2.Rodrigues(detection.rvec)
-    R_bw = R_mw @ R_cm.T @ R_CB.T
+    R_bw = R_mw @ R_cm.T @ R_CB_NOMINAL.T
     yaw = np.arctan2(R_bw[1, 0], R_bw[0, 0])
 
-    # Position: tvec is in camera frame, which rotates with drone yaw.
-    # R_CB converts camera→body, R_yaw converts body→world (yaw already includes marker orientation)
+    # Position: R_CB includes tilt correction, maps tilted camera frame → body frame correctly
     c, s = np.cos(yaw), np.sin(yaw)
     R_yaw = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
     cam_offset_world = R_yaw @ R_CB @ (-tvec)
@@ -376,8 +413,13 @@ def main():
 
     cam_w = cfg.get("camera", {}).get("width", 1280)
     cam_h = cfg.get("camera", {}).get("height", 720)
-    cam_matrix, dist_coeffs = load_camera_params(
+    cam_matrix, dist_coeffs, level_tvec = load_camera_params(
         config_dir / "camera_params.yaml", target_width=cam_w, target_height=cam_h)
+
+    # Compute R_CB with level calibration correction
+    global R_CB
+    R_CB = compute_R_CB(level_tvec)
+
     marker_map = load_marker_map(config_dir / "marker_map.yaml")
     aruco_cfg = cfg.get("aruco", {})
     marker_size = aruco_cfg.get("marker_size_m", 0.18)
