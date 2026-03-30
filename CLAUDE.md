@@ -111,6 +111,10 @@ Bookworm ships OpenCV 4.6.0 with the **old** ArUco API. The code handles both:
 - Subsequent frames: `SOLVEPNP_ITERATIVE` with previous frame's rvec/tvec
 - Sanity check: discard if distance > 10m or rvec > 20π, reset temporal state for that marker
 
+### MAVLink2 Requirement
+
+Connection uses `mavlink20=True` — required because `GPS_INPUT.yaw` is a MAVLink2 extension field. Without it, yaw is silently truncated. The receive loop also captures `GLOBAL_POSITION_INT` for FC position feedback.
+
 ### ArduPilot Heartbeat Requirement
 
 ArduPilot does NOT stream telemetry on non-primary UARTs until it receives heartbeats. `MAVLinkBridge.connect()` sends heartbeats BEFORE `wait_heartbeat()` and the receive loop continues at 1Hz.
@@ -132,9 +136,9 @@ ArduPilot does NOT stream telemetry on non-primary UARTs until it receives heart
 |------|---------|
 | `tools/debug_viewer.py` | Remote frame capture with timing overlay |
 | `tools/terminal_map.py` | Curses live position map (works over SSH) |
-| `tools/live_map.html` | Browser live map with pitch/roll gauges |
+| `tools/live_map.html` | Browser live map with marker weights, FC arrow, YAML import |
 | `tools/calibrate_level.py` | Camera mounting tilt calibration (records tvec under marker) |
-| `tools/glb_viewer.html` | Browser 3D viewer for GLB models + flight paths + waypoints |
+| `tools/glb_viewer.html` | Browser 3D viewer for GLB models + flight paths + marker placement |
 | `tools/vr_to_waypoints.py` | VR planner JSON → ArduPilot `.waypoints` |
 | `tools/tlog_to_vr_json.py` | Mission Planner `.tlog` → VR JSON |
 | `tools/generate_markers.py` | Generate printable ArUco marker PDFs |

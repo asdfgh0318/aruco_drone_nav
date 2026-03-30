@@ -3,12 +3,16 @@
 ## Architecture
 RPi + Camera = Visual GPS emulator. Detects markers, calculates position, sends GPS_INPUT to FC. FC handles everything else — barometer for altitude, vision for XY and yaw.
 
-## Current Status (2026-03-26)
+## Current Status (2026-03-30)
 
-### System: GPS Emulation with IMU-Corrected Position
+### System: Multi-Marker GPS Emulation with MAVLink2
 GPS_INPUT mode with angle-based position estimation. IMU pitch/roll corrects for drone tilt,
 vision provides yaw and tvec. Camera level calibration removes static mounting tilt.
 solvePnP IPPE ambiguity resolved with marker Z verticality check.
+
+**18 markers deployed** (IDs 0-17) across faculty building corridor (L-shaped layout).
+MAVLink2 enabled for GPS yaw support. FC position feedback via GLOBAL_POSITION_INT.
+Per-marker distance-weighted position fusion with confidence scoring.
 
 **Position tested stable** when tilting drone ±15°. ArduPilot map matches physical movement.
 
@@ -38,11 +42,11 @@ EK3_SRC1_YAW = 2       # GPS yaw (or 0)
 VISO_TYPE = 0           # Disabled
 ```
 
-### RPi Setup (Bookworm)
-- Debian Bookworm arm64, IP: 10.40.41.251
-- OpenCV 4.6.0 (old ArUco API — code supports both old and new)
-- UART: /dev/serial0 → ttyAMA0, baud 115200
-- Deps: python3-opencv, numpy, yaml, serial, pymavlink
+### RPi Setup (NixOS)
+- NixOS arm64, IP: 192.168.213.251, user: mtj
+- OpenCV 4.9.0, Python 3.12.8
+- UART: /dev/ttyS0, baud 115200
+- Deps via Nix: python3-opencv, numpy, yaml, serial, pymavlink
 
 ## Completed
 
@@ -82,10 +86,11 @@ VISO_TYPE = 0           # Disabled
 - [x] `tools/vr_to_waypoints.py` — VR planner JSON / missions JSON → ArduPilot `.waypoints`
 - [x] `tools/tlog_to_vr_json.py` — Mission Planner `.tlog` → VR planner JSON for path comparison
 
-### 3D Mission Viewer
+### 3D Mission Viewer & Marker Placement
 - [x] `tools/glb_viewer.html` — Browser-based GLB model + flight path + waypoints viewer
-- [x] Interactive tutorial wizard (7 steps, auto-shows on first visit, `?` to replay)
-- [x] Sample mission files in `viewer/samples/` for testing
+- [x] Marker placement mode (M key) — click ceiling to place markers, export to marker_map.yaml
+- [x] YAML import/export with per-marker height from click point
+- [x] Interactive tutorial wizard (8 steps, auto-shows on first visit, `?` to replay)
 
 ## Next: Reliability + Extended Flight Testing
 
@@ -100,8 +105,9 @@ VISO_TYPE = 0           # Disabled
 3. [ ] **Camera focus lock** — add to startup code
 
 ### Coverage
-1. [ ] **Multi-marker deployment** — multiple ceiling markers for larger area
+1. [x] **Multi-marker deployment** — 18 markers (IDs 0-17) deployed across faculty corridor
 2. [ ] **Loiter mode testing** — after althold is reliable
+3. [ ] **Marker orientation verification** — confirm 180° orientation matches physical mounting
 
 ## File Structure
 ```
@@ -110,10 +116,11 @@ src/mavlink_bridge.py       (~200 lines) - MAVLink connection + GPS emulation + 
 src/__main__.py             (3 lines)    - Entry point
 tools/vr_to_waypoints.py   (~230 lines) - VR planner JSON → ArduPilot .waypoints
 tools/tlog_to_vr_json.py   (~260 lines) - Mission Planner .tlog → VR planner JSON
-tools/glb_viewer.html      (~1040 lines)- 3D viewer with tutorial wizard
+tools/glb_viewer.html      (~1350 lines)- 3D viewer with marker placement + tutorial wizard
+tools/live_map.html        (~430 lines) - 2D live map with marker weights + FC position
 viewer/samples/                          - Sample mission files for testing
 ```
 
 ---
 
-*Last updated: 2026-03-18*
+*Last updated: 2026-03-30*

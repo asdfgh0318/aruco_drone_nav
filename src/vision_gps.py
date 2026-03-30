@@ -18,7 +18,7 @@ import yaml
 log = logging.getLogger(__name__)
 
 Detection = namedtuple("Detection", "marker_id rvec tvec distance timestamp centroid")
-DroneState = namedtuple("DroneState", "x y z yaw marker_ids confidence timestamp")
+DroneState = namedtuple("DroneState", "x y z yaw marker_ids confidence timestamp marker_weights")
 
 # --- Config loaders ---
 
@@ -339,6 +339,7 @@ def estimate_position(detections, marker_map, last_state, cam_matrix, alpha=0.3,
         d, cfg = valid[0]
         pos, yaw = estimate_single(d, cfg, imu_attitude)
         ids = [str(d.marker_id)]
+        marker_weights = {str(d.marker_id): 1.0}
         conf = 1.0
     else:
         positions, yaws, weights, ids = [], [], [], []
@@ -350,6 +351,7 @@ def estimate_position(detections, marker_map, last_state, cam_matrix, alpha=0.3,
             weights.append(w)
             ids.append(str(d.marker_id))
         tw = sum(weights)
+        marker_weights = {mid: round(w / tw, 3) for mid, w in zip(ids, weights)}
         pos = sum(positions) / tw
         sin_sum = sum(np.sin(np.radians(y)) * w for y, w in yaws)
         cos_sum = sum(np.cos(np.radians(y)) * w for y, w in yaws)
@@ -367,7 +369,7 @@ def estimate_position(detections, marker_map, last_state, cam_matrix, alpha=0.3,
         yaw = last_state.yaw + alpha * yaw_diff
 
     return DroneState(float(pos[0]), float(pos[1]), float(pos[2]),
-                      float(yaw), ids, float(conf), time.time())
+                      float(yaw), ids, float(conf), time.time(), marker_weights)
 
 # --- HTTP Position Server ---
 
@@ -376,12 +378,15 @@ class PositionServer:
         self.port = port
         self.state = None
         self.frame_jpeg = None
+        self.marker_map = {}
+        self._origin_lat = None
+        self._origin_lon = None
         self.stats = {"frames": 0, "detections": 0, "start": time.time(), "timing": {}}
         self._lock = threading.Lock()
         self._server = None
 
     def update(self, state, frames, detections, debug_frame=None, timing=None,
-               imu_attitude=None, cam_angles=None):
+               imu_attitude=None, cam_angles=None, fc_position=None):
         with self._lock:
             self.state = state
             self.stats["frames"] = frames
@@ -390,6 +395,7 @@ class PositionServer:
                 self.stats["timing"] = timing
             self.stats["imu"] = imu_attitude
             self.stats["cam_angles"] = cam_angles
+            self.stats["fc_position"] = fc_position
             if debug_frame is not None:
                 _, jpg = cv2.imencode(".jpg", debug_frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
                 self.frame_jpeg = jpg.tobytes()
@@ -404,7 +410,8 @@ class PositionServer:
             if s:
                 base.update({"x": round(s.x, 3), "y": round(s.y, 3), "z": round(s.z, 3),
                              "yaw": round(s.yaw, 1), "marker_ids": s.marker_ids,
-                             "confidence": round(s.confidence, 2)})
+                             "confidence": round(s.confidence, 2),
+                             "marker_weights": s.marker_weights})
             imu = st.get("imu")
             if imu:
                 base["imu_roll"] = round(np.degrees(imu[0]), 2)
@@ -413,6 +420,13 @@ class PositionServer:
             if cam:
                 base["cam_pitch"] = round(cam[0], 2)
                 base["cam_roll"] = round(cam[1], 2)
+            fc = st.get("fc_position")
+            if fc and self._origin_lat is not None:
+                fc_lat, fc_lon, fc_alt, fc_yaw = fc
+                fc_x = (fc_lon - self._origin_lon) * 111111.0 * np.cos(np.radians(self._origin_lat))
+                fc_y = (fc_lat - self._origin_lat) * 111111.0
+                base["fc"] = {"x": round(fc_x, 3), "y": round(fc_y, 3),
+                              "z": round(fc_alt, 3), "yaw": round(fc_yaw, 1)}
             return json.dumps(base)
 
     def start(self):
@@ -426,6 +440,14 @@ class PositionServer:
                     self.send_header("Access-Control-Allow-Origin", "*")
                     self.end_headers()
                     self.wfile.write(ref._json().encode())
+                elif self.path == "/markers":
+                    data = [{"id": int(k), "x": float(v["position"][0]), "y": float(v["position"][1]),
+                             "z": float(v["position"][2])} for k, v in ref.marker_map.items()]
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.end_headers()
+                    self.wfile.write(json.dumps(data).encode())
                 elif self.path == "/debug-frame":
                     with ref._lock:
                         jpg = ref.frame_jpeg
@@ -516,6 +538,9 @@ def main():
             log.info("Using VISION_POSITION_ESTIMATE mode")
 
     server = PositionServer(port=args.port)
+    server.marker_map = marker_map
+    server._origin_lat = origin_lat
+    server._origin_lon = origin_lon
     server.start()
 
     shutdown = [False]
@@ -595,8 +620,9 @@ def main():
                 cam_roll = np.degrees(np.arctan2(t[1], t[2]))
                 cam_angles = (cam_pitch, cam_roll)
             imu = mavlink.attitude if mavlink else None
+            fc_pos = mavlink.fc_position if mavlink else None
             server.update(state, frames, detections_count, frame, timing,
-                         imu_attitude=imu, cam_angles=cam_angles)
+                         imu_attitude=imu, cam_angles=cam_angles, fc_position=fc_pos)
 
             elapsed = time.time() - t_start
             if elapsed < loop_period:

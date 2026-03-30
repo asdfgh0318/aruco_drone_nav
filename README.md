@@ -19,7 +19,7 @@ A minimal Python system (~500 lines) for Raspberry Pi Zero 2W that detects ArUco
 | Detection Rate | 99-100% |
 | Processing Time | ~140ms/frame |
 | FPS | ~6 |
-| Marker Type | Single ArUco (DICT_4X4_50) |
+| Marker Type | Multi-marker ArUco (DICT_4X4_50, up to 50) |
 | Marker Size | 18cm (A4 printable) |
 | Working Distance | 1.5-2.5m |
 | Source Code | ~500 lines (2 files) |
@@ -33,9 +33,11 @@ gray:3ms  CLAHE:20ms  bgr:2ms  detect:110ms  total:135ms
 ```json
 {
   "x": 0.549, "y": -0.289, "z": 1.712,
-  "yaw": 159.2, "marker_ids": ["0"], "confidence": 1.0,
+  "yaw": 159.2, "marker_ids": ["0", "1"], "confidence": 0.85,
+  "marker_weights": {"0": 0.62, "1": 0.38},
   "detection_rate": 1.0, "uptime": 10.4,
-  "timing": {"gray": "5", "clahe": "21", "detect": "107", "total": "134"}
+  "timing": {"gray": "5", "clahe": "21", "detect": "107", "total": "134"},
+  "fc": {"x": 0.53, "y": -0.31, "z": 1.7, "yaw": 160.2}
 }
 ```
 
@@ -100,21 +102,20 @@ curl http://aruconav.local:8001/position
 python3 tools/debug_viewer.py --host aruconav.local --port 8001
 ```
 
-## 3D Mission Viewer
+## 3D Mission Viewer & Marker Placement
 
-Browser-based tool for visualizing GLB building models with flight paths and ArduPilot missions.
+Browser-based tool for visualizing GLB building models with flight paths, ArduPilot missions, and ArUco marker placement.
 
 ```bash
 # Open directly (static, no server needed)
 xdg-open tools/glb_viewer.html
-
-# Or with convert support (JSON↔waypoints, tlog→JSON)
-python3 server.py
 ```
 
-Load **GLB** models, **JSON** VR planner missions, and **.waypoints** ArduPilot files. Drag & drop supported. Sample files included in `viewer/samples/`.
+Load **GLB** models, **JSON** VR planner missions, and **.waypoints** ArduPilot files. Drag & drop supported.
 
-An interactive tutorial (`?` button or `?` key) walks through all features on first visit.
+**Marker Placement Mode** (`M` key): Click on the ceiling in the 3D model to place ArUco markers. Each marker shows as a purple square with an orange orientation arrow and a vertical drop line. Import/export `marker_map.yaml` directly. Per-marker ceiling height from click point, with optional fixed override.
+
+An interactive tutorial (`?` button) walks through all features on first visit.
 
 ## Project Structure
 
@@ -161,7 +162,8 @@ See [docs/FC_CONFIG.md](docs/FC_CONFIG.md) for full parameter list and tuning gu
 
 | Endpoint | Response |
 |----------|----------|
-| `GET /position` | JSON with x, y, z, yaw, confidence, timing, detection_rate |
+| `GET /position` | JSON with x, y, z, yaw, confidence, marker_weights, fc position, timing |
+| `GET /markers` | JSON array of marker positions from marker_map.yaml |
 | `GET /debug-frame` | JPEG image from camera |
 
 ## Documentation
@@ -177,6 +179,7 @@ See [docs/FC_CONFIG.md](docs/FC_CONFIG.md) for full parameter list and tuning gu
 - **OpenCV CORNER_REFINE_CONTOUR crash**: Rare assertion error, handled by skipping bad frames
 - **Single-threaded detection**: ArUco detect takes ~110ms, limiting FPS to ~6
 - **solvePnP divergence**: ITERATIVE solver can diverge with bad initial guess — sanity check discards results >10m
+- **18cm markers**: Smaller than A3 originals, ~67px at 3m ceiling — adequate but less margin at frame edges
 
 ## License
 
@@ -189,4 +192,4 @@ Proprietary - Warsaw University of Technology
 
 ---
 
-*Last updated: 2026-03-26*
+*Last updated: 2026-03-30*

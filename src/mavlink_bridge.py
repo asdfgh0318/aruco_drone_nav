@@ -20,6 +20,7 @@ class MAVLinkBridge:
         self._thread = None
         self._last_heartbeat = 0.0
         self.attitude = None  # (roll, pitch, yaw) in radians
+        self.fc_position = None  # (lat, lon, alt, yaw_deg) from FC EKF
         self._origin = None   # (lat, lon, alt) for EKF origin
         self._origin_set = False
 
@@ -42,7 +43,7 @@ class MAVLinkBridge:
                     serial.Serial.read = _safe_read
                 except ImportError:
                     pass
-            self.conn = mavutil.mavlink_connection(self.port, **kwargs)
+            self.conn = mavutil.mavlink_connection(self.port, mavlink20=True, **kwargs)
 
             # ArduPilot requires heartbeats before it streams on non-primary UARTs
             log.info("Sending heartbeats to wake up FC...")
@@ -109,6 +110,12 @@ class MAVLinkBridge:
                         self._last_heartbeat = time.time()
                     elif mtype == "ATTITUDE":
                         self.attitude = (msg.roll, msg.pitch, msg.yaw)
+                    elif mtype == "GLOBAL_POSITION_INT":
+                        self.fc_position = (
+                            msg.lat / 1e7, msg.lon / 1e7,
+                            msg.relative_alt / 1000.0,
+                            msg.hdg / 100.0 if msg.hdg != 65535 else 0.0
+                        )
             except Exception:
                 pass
 

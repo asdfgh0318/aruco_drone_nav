@@ -39,9 +39,24 @@
 - [x] **Camera focus lock** — add to Camera.start() so autofocus is disabled automatically
 
 ### Coverage
-- [ ] **Multi-marker deployment** - Multiple ceiling markers for larger area
+- [x] **Multi-marker deployment** — 18 markers (IDs 0-17) deployed across faculty building
+- [ ] **Full corridor flight test** — test navigation across all 18 markers
+- [ ] **Marker orientation tuning** — verify 180° orientation produces correct yaw
 
 ## Completed
+
+### Session 2026-03-30: Multi-Marker Deployment + MAVLink2 + Marker Placement Tool
+- [x] Multi-marker map: 18 markers (IDs 0-17) placed via GLB viewer across faculty corridor
+- [x] GLB viewer marker placement mode (M key): click ceiling to place, YAML import/export
+- [x] Per-marker height from click point with optional fixed override
+- [x] MAVLink2 enabled (`mavlink20=True`) — fixes GPS_INPUT yaw (was MAVLink1 extension, silently dropped)
+- [x] FC position feedback: GLOBAL_POSITION_INT → ENU → second drone arrow on live map
+- [x] Per-marker weights in position JSON and live map (green=active with %, gray=inactive)
+- [x] Live map YAML import button for marker visualization
+- [x] Live map plan view fix (North=up, East=right — was mirrored "from below" view)
+- [x] Generated all 50 ArUco marker PDFs (DICT_4X4_50, 18cm on A4)
+- [x] Fixed generate_markers.py broken import (aruco_detector module removed)
+- [x] Updated RPi IP to 192.168.213.251
 
 ### Session 2026-03-26: IMU-Corrected Position + solvePnP Fix + Live Map
 - [x] Discovered solvePnP IPPE ambiguity (two solutions flip randomly at perpendicular viewing)
@@ -134,4 +149,4 @@
 
 ---
 
-*Last updated: 2026-03-18*
+*Last updated: 2026-03-30*

@@ -25,8 +25,11 @@
 
 <div id="top">
   <div>
-    <input id="host" type="text" value="10.40.41.251:8001" placeholder="host:port">
+    <input id="host" type="text" value="192.168.213.251:8001" placeholder="host:port">
     <button onclick="toggle()">Connect</button>
+    <label style="background:#4a3080;color:#e0e0e0;border:none;padding:5px 12px;border-radius:4px;cursor:pointer;font-weight:bold;font-size:13px;margin-left:8px">
+      YAML<input type="file" id="yaml-input" accept=".yaml,.yml" style="display:none">
+    </label>
   </div>
   <div class="status" id="status">Disconnected</div>
 </div>
@@ -50,7 +53,10 @@ let cx, cy; // canvas center (world origin)
 let trail = [];
 const MAX_TRAIL = 500;
 let drone = null;
-let markers = [{id: 0, x: 0, y: 0}]; // default, could load from config
+let fcDrone = null; // FC's EKF position estimate
+let fcTrail = [];
+let activeWeights = {}; // {id: weight} from server
+let markers = []; // load via YAML button or /markers endpoint
 let polling = null;
 let lastData = null;
 let panX = 0, panY = 0;
@@ -66,9 +72,9 @@ function resize() {
 window.addEventListener('resize', resize);
 resize();
 
-// World to canvas
+// World to canvas (plan view from above: E=right, N=up)
 function w2c(wx, wy) {
-  return [cx + wy * scale, cy - wx * scale]; // X=fwd=up on screen, Y=right=right on screen
+  return [cx + wx * scale, cy - wy * scale]; // X(East)=right, Y(North)=up
 }
 
 function drawGrid() {
@@ -92,19 +98,26 @@ function drawGrid() {
   ctx.beginPath(); ctx.moveTo(ox, 0); ctx.lineTo(ox, H/devicePixelRatio); ctx.stroke();
   // Labels
   ctx.fillStyle = '#555'; ctx.font = '11px Consolas';
-  ctx.fillText('R +Y', W/devicePixelRatio - 40, oy - 5);
-  ctx.fillText('F +X', ox + 5, 15);
+  ctx.fillText('E +X', W/devicePixelRatio - 40, oy - 5);
+  ctx.fillText('N +Y', ox + 5, 15);
 }
 
 function drawMarkers() {
   markers.forEach(m => {
     const [sx, sy] = w2c(m.x, m.y);
-    ctx.fillStyle = '#a855f7';
+    const w = activeWeights[String(m.id)];
+    const active = w !== undefined;
+    const color = active ? '#4ade80' : '#555';
+    ctx.fillStyle = color;
     ctx.fillRect(sx - 8, sy - 8, 16, 16);
-    ctx.strokeStyle = '#a855f7'; ctx.lineWidth = 1;
+    ctx.strokeStyle = active ? '#4ade80' : '#777'; ctx.lineWidth = active ? 2 : 1;
     ctx.strokeRect(sx - 12, sy - 12, 24, 24);
-    ctx.fillStyle = '#ddd'; ctx.font = '11px Consolas';
+    ctx.fillStyle = active ? '#fff' : '#888'; ctx.font = '11px Consolas';
     ctx.fillText('M' + m.id, sx + 15, sy + 4);
+    if (active) {
+      ctx.fillStyle = '#ffa500'; ctx.font = 'bold 12px Consolas';
+      ctx.fillText((w * 100).toFixed(0) + '%', sx + 15, sy + 18);
+    }
   });
 }
 
@@ -167,6 +180,53 @@ function drawDrone(x, y, yaw) {
   ctx.fillText(`yaw: ${yaw.toFixed(1)}`, sx + 22, sy + 10);
 }
 
+function drawFcDrone(x, y, yaw) {
+  const [sx, sy] = w2c(x, y);
+  const rad = -yaw * Math.PI / 180 + Math.PI/2;
+  const size = 14;
+
+  ctx.save();
+  ctx.translate(sx, sy);
+  ctx.rotate(-rad);
+
+  // Body - orange/red for FC
+  ctx.fillStyle = 'rgba(255, 140, 0, 0.5)';
+  ctx.beginPath();
+  ctx.moveTo(0, -size);
+  ctx.lineTo(-size*0.6, size*0.5);
+  ctx.lineTo(0, size*0.2);
+  ctx.lineTo(size*0.6, size*0.5);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.strokeStyle = '#ff8c00';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  ctx.fillStyle = '#ff8c00';
+  ctx.beginPath(); ctx.arc(0, 0, 2, 0, Math.PI*2); ctx.fill();
+
+  ctx.restore();
+
+  ctx.fillStyle = '#ff8c00'; ctx.font = '11px Consolas';
+  ctx.fillText(`FC (${x.toFixed(2)}, ${y.toFixed(2)})`, sx + 20, sy - 5);
+  ctx.fillText(`yaw: ${yaw.toFixed(1)}`, sx + 20, sy + 8);
+}
+
+function drawFcTrail() {
+  if (fcTrail.length < 2) return;
+  ctx.beginPath();
+  ctx.strokeStyle = 'rgba(255, 140, 0, 0.3)';
+  ctx.lineWidth = 1.5;
+  const [sx0, sy0] = w2c(fcTrail[0].x, fcTrail[0].y);
+  ctx.moveTo(sx0, sy0);
+  for (let i = 1; i < fcTrail.length; i++) {
+    const [sx, sy] = w2c(fcTrail[i].x, fcTrail[i].y);
+    ctx.lineTo(sx, sy);
+  }
+  ctx.stroke();
+}
+
 function draw() {
   ctx.clearRect(0, 0, W/devicePixelRatio, H/devicePixelRatio);
   cx = W/(2*devicePixelRatio) + panX;
@@ -174,14 +234,25 @@ function draw() {
   drawGrid();
   drawMarkers();
   drawTrail();
+  drawFcTrail();
   if (drone) drawDrone(drone.x, drone.y, drone.yaw);
+  if (fcDrone) drawFcDrone(fcDrone.x, fcDrone.y, fcDrone.yaw);
   requestAnimationFrame(draw);
 }
 draw();
 
 // Polling
+async function fetchMarkers() {
+  const host = document.getElementById('host').value;
+  try {
+    const r = await fetch(`http://${host}/markers`, {signal: AbortSignal.timeout(2000)});
+    markers = await r.json();
+  } catch(e) { /* keep defaults */ }
+}
+
 function toggle() {
   if (polling) { clearInterval(polling); polling = null; document.getElementById('status').innerHTML = '<span class="warn">Stopped</span>'; return; }
+  fetchMarkers();
   polling = setInterval(fetchPos, 150);
   document.getElementById('status').innerHTML = '<span class="ok">Connecting...</span>';
 }
@@ -196,6 +267,20 @@ async function fetchPos() {
       drone = {x: d.x, y: d.y, z: d.z || 0, yaw: d.yaw || 0};
       trail.push({x: d.x, y: d.y, t: Date.now()});
       if (trail.length > MAX_TRAIL) trail.shift();
+    }
+    if (d.fc) {
+      fcDrone = {x: d.fc.x, y: d.fc.y, z: d.fc.z || 0, yaw: d.fc.yaw || 0};
+      fcTrail.push({x: d.fc.x, y: d.fc.y, t: Date.now()});
+      if (fcTrail.length > MAX_TRAIL) fcTrail.shift();
+    }
+    if (d.marker_weights) {
+      activeWeights = d.marker_weights;
+    } else if (d.marker_ids && d.marker_ids.length) {
+      activeWeights = {};
+      const w = 1.0 / d.marker_ids.length;
+      d.marker_ids.forEach(id => activeWeights[String(id)] = w);
+    } else {
+      activeWeights = {};
     }
     const det = d.detection_rate !== undefined ? (d.detection_rate * 100).toFixed(0) : '?';
     const fps = d.timing ? (1000 / parseInt(d.timing.total || 150)).toFixed(1) : '?';
@@ -242,9 +327,38 @@ canvas.addEventListener('wheel', e => {
 
 // Keyboard
 document.addEventListener('keydown', e => {
-  if (e.key === 'c') { trail = []; } // clear trail
+  if (e.key === 'c') { trail = []; fcTrail = []; } // clear trails
   if (e.key === 'r') { panX = 0; panY = 0; scale = 100; } // reset view
   if (e.key === ' ') { toggle(); e.preventDefault(); } // toggle connection
+});
+
+// YAML import
+document.getElementById('yaml-input').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    const text = reader.result;
+    const parsed = [];
+    let currentId = null, pos = null;
+    for (const line of text.split('\n')) {
+      const idMatch = line.match(/^\s+-\s*id:\s*(\d+)/);
+      if (idMatch) {
+        if (currentId !== null && pos) parsed.push({id: currentId, x: pos[0], y: pos[1]});
+        currentId = parseInt(idMatch[1]); pos = null;
+      }
+      const posMatch = line.match(/position:\s*\[([-\d.]+),\s*([-\d.]+),\s*([-\d.]+)\]/);
+      if (posMatch && currentId !== null) pos = [parseFloat(posMatch[1]), parseFloat(posMatch[2])];
+    }
+    if (currentId !== null && pos) parsed.push({id: currentId, x: pos[0], y: pos[1]});
+    if (parsed.length) {
+      markers = parsed;
+      document.getElementById('status').innerHTML =
+        `<span class="ok">Loaded ${markers.length} markers from ${file.name}</span>`;
+    }
+  };
+  reader.readAsText(file);
+  e.target.value = '';
 });
 
 // Angle gauges
