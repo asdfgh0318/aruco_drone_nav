@@ -135,7 +135,6 @@ This is applied automatically when loading JSON/WPL data.
 North =  unity_z
 East  =  unity_x
 Down  = -unity_y
-Alt   =  unity_y
 ```
 
 ### WPL reverse conversion (lat/lon → Unity)

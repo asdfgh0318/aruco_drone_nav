@@ -19,6 +19,38 @@
   #angles canvas { display: block; margin-bottom: 8px; }
   #angles .label { font-size: 11px; color: #888; text-align: center; margin-bottom: 5px; }
   #stats .val { color: #7dd3fc; }
+
+  /* Snapshot viewer */
+  #snap-wrap {
+    position: absolute; bottom: 10px; right: 10px;
+    background: rgba(13,17,23,0.92); border: 1px solid #333; border-radius: 8px;
+    padding: 8px; display: none; z-index: 20;
+  }
+  #snap-wrap img { max-width: 400px; max-height: 300px; border-radius: 4px; display: block; }
+  #snap-wrap .snap-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+  #snap-wrap .snap-bar span { font-size: 11px; color: #888; }
+  #snap-wrap .snap-bar button { background: #0f3460; color: #e0e0e0; border: 1px solid #1a4080; padding: 3px 10px; border-radius: 4px; cursor: pointer; font-size: 11px; }
+  #snap-wrap .snap-bar button:hover { background: #1a4080; }
+  #snap-close { cursor: pointer; color: #666; font-size: 14px; margin-left: 8px; }
+  #snap-close:hover { color: #ff6b6b; }
+
+  /* Camera config panel */
+  #cam-panel {
+    position: absolute; top: 10px; left: 10px;
+    background: rgba(13,17,23,0.92); border: 1px solid #333; border-radius: 8px;
+    padding: 10px 14px; font-size: 12px; display: none; z-index: 20;
+    min-width: 260px;
+  }
+  #cam-panel .cp-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  #cam-panel .cp-header b { color: #e94560; }
+  #cam-panel .cp-close { cursor: pointer; color: #666; font-size: 14px; }
+  #cam-panel .cp-close:hover { color: #ff6b6b; }
+  .cam-ctrl { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+  .cam-ctrl label { font-size: 11px; color: #888; min-width: 80px; }
+  .cam-ctrl input[type=number] {
+    width: 70px; padding: 2px 4px; font-size: 11px; font-family: monospace;
+    background: #0a1830; color: #7dd3fc; border: 1px solid #0f3460; border-radius: 3px; text-align: right;
+  }
 </style>
 </head>
 <body>
@@ -30,6 +62,8 @@
     <label style="background:#4a3080;color:#e0e0e0;border:none;padding:5px 12px;border-radius:4px;cursor:pointer;font-weight:bold;font-size:13px;margin-left:8px">
       YAML<input type="file" id="yaml-input" accept=".yaml,.yml" style="display:none">
     </label>
+    <button id="snap-btn" style="background:#0f6460;margin-left:8px" title="Capture frame (S)">SNAP</button>
+    <button id="cam-btn" style="background:#604a0f;margin-left:4px" title="Camera config (K)">CAM</button>
   </div>
   <div class="status" id="status">Disconnected</div>
 </div>
@@ -42,6 +76,38 @@
     <canvas id="pitch-gauge" width="200" height="120"></canvas>
     <div class="label">ROLL (front view)</div>
     <canvas id="roll-gauge" width="200" height="120"></canvas>
+    <div id="body-tvec" style="font-size:11px;color:#888;margin-top:8px;padding-top:8px;border-top:1px solid #333;line-height:1.6">
+      <div class="label">CODE in body (R_CB)</div>
+      <div>fwd: <span id="bt-fwd" class="val">—</span></div>
+      <div>right: <span id="bt-right" class="val">—</span></div>
+      <div>down: <span id="bt-down" class="val">—</span></div>
+      <div class="label" style="margin-top:6px">Body offset (step4)</div>
+      <div>fwd: <span id="bo-fwd" class="val">—</span></div>
+      <div>right: <span id="bo-right" class="val">—</span></div>
+      <div>down: <span id="bo-down" class="val">—</span></div>
+    </div>
+  </div>
+
+  <!-- Snapshot viewer -->
+  <div id="snap-wrap">
+    <div class="snap-bar">
+      <span id="snap-time"></span>
+      <div>
+        <button id="snap-refresh">Refresh</button>
+        <span id="snap-close">&#x2715;</span>
+      </div>
+    </div>
+    <img id="snap-img" alt="No frame">
+  </div>
+
+  <!-- Camera config panel -->
+  <div id="cam-panel">
+    <div class="cp-header">
+      <b>Camera Config</b>
+      <span class="cp-close" id="cam-close">&#x2715;</span>
+    </div>
+    <div id="cam-controls"></div>
+    <button id="cam-reload" style="margin-top:6px;width:100%;padding:4px;background:#0f3460;color:#e0e0e0;border:1px solid #1a4080;border-radius:4px;cursor:pointer;font-size:11px">Reload from camera</button>
   </div>
 </div>
 
@@ -73,8 +139,9 @@ window.addEventListener('resize', resize);
 resize();
 
 // World to canvas (plan view from above: E=right, N=up)
-function w2c(wx, wy) {
-  return [cx + wx * scale, cy - wy * scale]; // X(East)=right, Y(North)=up
+// NED: first arg = North, second arg = East
+function w2c(n, e) {
+  return [cx + e * scale, cy - n * scale]; // East=right, North=up
 }
 
 function drawGrid() {
@@ -98,13 +165,13 @@ function drawGrid() {
   ctx.beginPath(); ctx.moveTo(ox, 0); ctx.lineTo(ox, H/devicePixelRatio); ctx.stroke();
   // Labels
   ctx.fillStyle = '#555'; ctx.font = '11px Consolas';
-  ctx.fillText('E +X', W/devicePixelRatio - 40, oy - 5);
-  ctx.fillText('N +Y', ox + 5, 15);
+  ctx.fillText('E +Y', W/devicePixelRatio - 40, oy - 5);
+  ctx.fillText('N +X', ox + 5, 15);
 }
 
 function drawMarkers() {
   markers.forEach(m => {
-    const [sx, sy] = w2c(m.x, m.y);
+    const [sx, sy] = w2c(m.n, m.e);
     const w = activeWeights[String(m.id)];
     const active = w !== undefined;
     const color = active ? '#4ade80' : '#555';
@@ -112,8 +179,26 @@ function drawMarkers() {
     ctx.fillRect(sx - 8, sy - 8, 16, 16);
     ctx.strokeStyle = active ? '#4ade80' : '#777'; ctx.lineWidth = active ? 2 : 1;
     ctx.strokeRect(sx - 12, sy - 12, 24, 24);
+
+    // Orientation arrow (orange) — NED: 0°=North(up), 90°=East(right), CW
+    const ori = m.orientation || 0;
+    const rad = ori * Math.PI / 180;
+    const arrowLen = 18;
+    const ax = sx + Math.sin(rad) * arrowLen;
+    const ay = sy - Math.cos(rad) * arrowLen;
+    ctx.strokeStyle = '#ff6600'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ax, ay); ctx.stroke();
+    const headLen = 5, headAng = 0.5;
+    ctx.beginPath();
+    ctx.moveTo(ax, ay);
+    ctx.lineTo(ax - headLen * Math.sin(rad - headAng), ay + headLen * Math.cos(rad - headAng));
+    ctx.moveTo(ax, ay);
+    ctx.lineTo(ax - headLen * Math.sin(rad + headAng), ay + headLen * Math.cos(rad + headAng));
+    ctx.stroke();
+
+    // Label
     ctx.fillStyle = active ? '#fff' : '#888'; ctx.font = '11px Consolas';
-    ctx.fillText('M' + m.id, sx + 15, sy + 4);
+    ctx.fillText('M' + m.id + ' ' + ori + '°', sx + 15, sy + 4);
     if (active) {
       ctx.fillStyle = '#ffa500'; ctx.font = 'bold 12px Consolas';
       ctx.fillText((w * 100).toFixed(0) + '%', sx + 15, sy + 18);
@@ -126,10 +211,10 @@ function drawTrail() {
   ctx.beginPath();
   ctx.strokeStyle = 'rgba(74, 158, 255, 0.4)';
   ctx.lineWidth = 2;
-  const [sx0, sy0] = w2c(trail[0].x, trail[0].y);
+  const [sx0, sy0] = w2c(trail[0].n, trail[0].e);
   ctx.moveTo(sx0, sy0);
   for (let i = 1; i < trail.length; i++) {
-    const [sx, sy] = w2c(trail[i].x, trail[i].y);
+    const [sx, sy] = w2c(trail[i].n, trail[i].e);
     ctx.lineTo(sx, sy);
   }
   ctx.stroke();
@@ -137,21 +222,21 @@ function drawTrail() {
   // Trail dots
   trail.forEach((p, i) => {
     if (i % 5 !== 0) return;
-    const [sx, sy] = w2c(p.x, p.y);
+    const [sx, sy] = w2c(p.n, p.e);
     const alpha = 0.1 + 0.5 * (i / trail.length);
     ctx.fillStyle = `rgba(74, 158, 255, ${alpha})`;
     ctx.beginPath(); ctx.arc(sx, sy, 2, 0, Math.PI*2); ctx.fill();
   });
 }
 
-function drawDrone(x, y, yaw) {
-  const [sx, sy] = w2c(x, y);
-  const rad = -yaw * Math.PI / 180 + Math.PI/2; // compass to canvas angle
+function drawDrone(n, e, yaw) {
+  const [sx, sy] = w2c(n, e);
+  const rad = yaw * Math.PI / 180; // compass: 0=N(up), 90=E(right), 180=S(down)
   const size = 18;
 
   ctx.save();
   ctx.translate(sx, sy);
-  ctx.rotate(-rad);
+  ctx.rotate(rad);
 
   // Body
   ctx.fillStyle = '#4ade80';
@@ -176,18 +261,18 @@ function drawDrone(x, y, yaw) {
 
   // Position text
   ctx.fillStyle = '#4ade80'; ctx.font = '12px Consolas';
-  ctx.fillText(`(${x.toFixed(2)}, ${y.toFixed(2)})`, sx + 22, sy - 5);
+  ctx.fillText(`(${n.toFixed(2)}, ${e.toFixed(2)})`, sx + 22, sy - 5);
   ctx.fillText(`yaw: ${yaw.toFixed(1)}`, sx + 22, sy + 10);
 }
 
-function drawFcDrone(x, y, yaw) {
-  const [sx, sy] = w2c(x, y);
-  const rad = -yaw * Math.PI / 180 + Math.PI/2;
+function drawFcDrone(n, e, yaw) {
+  const [sx, sy] = w2c(n, e);
+  const rad = yaw * Math.PI / 180;
   const size = 14;
 
   ctx.save();
   ctx.translate(sx, sy);
-  ctx.rotate(-rad);
+  ctx.rotate(rad);
 
   // Body - orange/red for FC
   ctx.fillStyle = 'rgba(255, 140, 0, 0.5)';
@@ -209,7 +294,7 @@ function drawFcDrone(x, y, yaw) {
   ctx.restore();
 
   ctx.fillStyle = '#ff8c00'; ctx.font = '11px Consolas';
-  ctx.fillText(`FC (${x.toFixed(2)}, ${y.toFixed(2)})`, sx + 20, sy - 5);
+  ctx.fillText(`FC (${n.toFixed(2)}, ${e.toFixed(2)})`, sx + 20, sy - 5);
   ctx.fillText(`yaw: ${yaw.toFixed(1)}`, sx + 20, sy + 8);
 }
 
@@ -218,10 +303,10 @@ function drawFcTrail() {
   ctx.beginPath();
   ctx.strokeStyle = 'rgba(255, 140, 0, 0.3)';
   ctx.lineWidth = 1.5;
-  const [sx0, sy0] = w2c(fcTrail[0].x, fcTrail[0].y);
+  const [sx0, sy0] = w2c(fcTrail[0].n, fcTrail[0].e);
   ctx.moveTo(sx0, sy0);
   for (let i = 1; i < fcTrail.length; i++) {
-    const [sx, sy] = w2c(fcTrail[i].x, fcTrail[i].y);
+    const [sx, sy] = w2c(fcTrail[i].n, fcTrail[i].e);
     ctx.lineTo(sx, sy);
   }
   ctx.stroke();
@@ -235,8 +320,8 @@ function draw() {
   drawMarkers();
   drawTrail();
   drawFcTrail();
-  if (drone) drawDrone(drone.x, drone.y, drone.yaw);
-  if (fcDrone) drawFcDrone(fcDrone.x, fcDrone.y, fcDrone.yaw);
+  if (drone) drawDrone(drone.n, drone.e, drone.yaw);
+  if (fcDrone) drawFcDrone(fcDrone.n, fcDrone.e, fcDrone.yaw);
   requestAnimationFrame(draw);
 }
 draw();
@@ -263,14 +348,14 @@ async function fetchPos() {
     const r = await fetch(`http://${host}/position`, {signal: AbortSignal.timeout(1000)});
     const d = await r.json();
     lastData = d;
-    if (d.x !== undefined) {
-      drone = {x: d.x, y: d.y, z: d.z || 0, yaw: d.yaw || 0};
-      trail.push({x: d.x, y: d.y, t: Date.now()});
+    if (d.n !== undefined) {
+      drone = {n: d.n, e: d.e, d: d.d || 0, yaw: d.yaw || 0};
+      trail.push({n: d.n, e: d.e, t: Date.now()});
       if (trail.length > MAX_TRAIL) trail.shift();
     }
     if (d.fc) {
-      fcDrone = {x: d.fc.x, y: d.fc.y, z: d.fc.z || 0, yaw: d.fc.yaw || 0};
-      fcTrail.push({x: d.fc.x, y: d.fc.y, t: Date.now()});
+      fcDrone = {n: d.fc.n, e: d.fc.e, d: d.fc.d || 0, yaw: d.fc.yaw || 0};
+      fcTrail.push({n: d.fc.n, e: d.fc.e, t: Date.now()});
       if (fcTrail.length > MAX_TRAIL) fcTrail.shift();
     }
     if (d.marker_weights) {
@@ -286,14 +371,14 @@ async function fetchPos() {
     const fps = d.timing ? (1000 / parseInt(d.timing.total || 150)).toFixed(1) : '?';
     document.getElementById('status').innerHTML = `<span class="ok">Connected</span> | FPS: ${fps} | Det: ${det}%`;
     const t = d.timing || {};
-    const hasPos = d.x !== undefined;
+    const hasPos = d.n !== undefined;
     const detPct = d.detection_rate !== undefined ? (d.detection_rate * 100).toFixed(0) : '?';
     const detColor = d.detection_rate > 0.5 ? 'ok' : 'err';
     document.getElementById('stats').innerHTML =
       (hasPos ?
-        `  x: <span class="val">${d.x.toFixed(3)}</span> m<br>` +
-        `  y: <span class="val">${d.y.toFixed(3)}</span> m<br>` +
-        `  z: <span class="val">${(d.z||0).toFixed(3)}</span> m<br>` +
+        `  N: <span class="val">${d.n.toFixed(3)}</span> m<br>` +
+        `  E: <span class="val">${d.e.toFixed(3)}</span> m<br>` +
+        `  D: <span class="val">${(d.d||0).toFixed(3)}</span> m<br>` +
         `yaw: <span class="val">${d.yaw.toFixed(1)}</span> deg<br>` +
         `conf: <span class="val">${(d.confidence||0).toFixed(2)}</span><br>`
       : '<span class="err">NO FIX</span><br>') +
@@ -309,6 +394,26 @@ async function fetchPos() {
         Object.entries(t).map(([k,v]) => `  ${k}: <span class="val">${v}ms</span>`).join('<br>')
       : '');
     updateGauges(d);
+    // Body tvec display
+    if (d.body_tvec) {
+      document.getElementById('bt-fwd').textContent = d.body_tvec.fwd.toFixed(3) + ' m';
+      document.getElementById('bt-right').textContent = d.body_tvec.right.toFixed(3) + ' m';
+      document.getElementById('bt-down').textContent = d.body_tvec.down.toFixed(3) + ' m';
+    } else {
+      document.getElementById('bt-fwd').textContent = '—';
+      document.getElementById('bt-right').textContent = '—';
+      document.getElementById('bt-down').textContent = '—';
+    }
+    // Body offset (step 4) display
+    if (d.body_offset) {
+      document.getElementById('bo-fwd').textContent = d.body_offset.fwd.toFixed(3) + ' m';
+      document.getElementById('bo-right').textContent = d.body_offset.right.toFixed(3) + ' m';
+      document.getElementById('bo-down').textContent = d.body_offset.down.toFixed(3) + ' m';
+    } else {
+      document.getElementById('bo-fwd').textContent = '—';
+      document.getElementById('bo-right').textContent = '—';
+      document.getElementById('bo-down').textContent = '—';
+    }
   } catch(e) {
     document.getElementById('status').innerHTML = `<span class="err">Error: ${e.message}</span>`;
   }
@@ -330,6 +435,8 @@ document.addEventListener('keydown', e => {
   if (e.key === 'c') { trail = []; fcTrail = []; } // clear trails
   if (e.key === 'r') { panX = 0; panY = 0; scale = 100; } // reset view
   if (e.key === ' ') { toggle(); e.preventDefault(); } // toggle connection
+  if (e.key === 's') { takeSnapshot(); } // snapshot
+  if (e.key === 'k') { toggleCamPanel(); } // camera config
 });
 
 // YAML import
@@ -340,17 +447,20 @@ document.getElementById('yaml-input').addEventListener('change', (e) => {
   reader.onload = () => {
     const text = reader.result;
     const parsed = [];
-    let currentId = null, pos = null;
+    let currentId = null, pos = null, ori = 0;
     for (const line of text.split('\n')) {
+      if (line.match(/^\s*#/)) continue; // skip comments
       const idMatch = line.match(/^\s+-\s*id:\s*(\d+)/);
       if (idMatch) {
-        if (currentId !== null && pos) parsed.push({id: currentId, x: pos[0], y: pos[1]});
-        currentId = parseInt(idMatch[1]); pos = null;
+        if (currentId !== null && pos) parsed.push({id: currentId, n: pos[0], e: pos[1], orientation: ori});
+        currentId = parseInt(idMatch[1]); pos = null; ori = 0;
       }
       const posMatch = line.match(/position:\s*\[([-\d.]+),\s*([-\d.]+),\s*([-\d.]+)\]/);
       if (posMatch && currentId !== null) pos = [parseFloat(posMatch[1]), parseFloat(posMatch[2])];
+      const oriMatch = line.match(/orientation:\s*([-\d.]+)/);
+      if (oriMatch && currentId !== null) ori = parseFloat(oriMatch[1]);
     }
-    if (currentId !== null && pos) parsed.push({id: currentId, x: pos[0], y: pos[1]});
+    if (currentId !== null && pos) parsed.push({id: currentId, n: pos[0], e: pos[1], orientation: ori});
     if (parsed.length) {
       markers = parsed;
       document.getElementById('status').innerHTML =
@@ -360,6 +470,103 @@ document.getElementById('yaml-input').addEventListener('change', (e) => {
   reader.readAsText(file);
   e.target.value = '';
 });
+
+// ── Snapshot ──
+async function takeSnapshot() {
+  const host = document.getElementById('host').value;
+  const img = document.getElementById('snap-img');
+  const wrap = document.getElementById('snap-wrap');
+  try {
+    const r = await fetch(`http://${host}/debug-frame`, {signal: AbortSignal.timeout(3000)});
+    if (!r.ok) { img.alt = `Error ${r.status}`; wrap.style.display = 'block'; return; }
+    const blob = await r.blob();
+    img.src = URL.createObjectURL(blob);
+    img.alt = '';
+    document.getElementById('snap-time').textContent = new Date().toLocaleTimeString();
+    wrap.style.display = 'block';
+  } catch(e) {
+    img.alt = 'Failed: ' + e.message;
+    wrap.style.display = 'block';
+  }
+}
+
+document.getElementById('snap-btn').addEventListener('click', takeSnapshot);
+document.getElementById('snap-refresh').addEventListener('click', takeSnapshot);
+document.getElementById('snap-close').addEventListener('click', () => {
+  document.getElementById('snap-wrap').style.display = 'none';
+});
+
+// ── Camera Config ──
+const CAM_CONTROLS = [
+  { name: 'brightness',    label: 'Brightness',    min: -64,  max: 64,   step: 1 },
+  { name: 'contrast',      label: 'Contrast',      min: 0,    max: 64,   step: 1 },
+  { name: 'saturation',    label: 'Saturation',    min: 0,    max: 128,  step: 1 },
+  { name: 'sharpness',     label: 'Sharpness',     min: 0,    max: 128,  step: 1 },
+  { name: 'gain',          label: 'Gain',          min: 0,    max: 255,  step: 1 },
+  { name: 'exposure',      label: 'Exposure',      min: -13,  max: -1,   step: 1 },
+  { name: 'auto_exposure', label: 'Auto Exp',      min: 0,    max: 3,    step: 1 },
+  { name: 'white_balance', label: 'White Bal',     min: 2000, max: 8000, step: 100 },
+  { name: 'auto_wb',       label: 'Auto WB',       min: 0,    max: 1,    step: 1 },
+  { name: 'focus',         label: 'Focus',         min: 0,    max: 255,  step: 5 },
+  { name: 'autofocus',     label: 'Autofocus',     min: 0,    max: 1,    step: 1 },
+];
+
+function buildCamControls(currentValues) {
+  const container = document.getElementById('cam-controls');
+  container.innerHTML = '';
+  for (const ctrl of CAM_CONTROLS) {
+    const val = currentValues[ctrl.name];
+    if (val === undefined) continue;
+    const div = document.createElement('div');
+    div.className = 'cam-ctrl';
+    div.innerHTML = `
+      <label>${ctrl.label}</label>
+      <input type="number" min="${ctrl.min}" max="${ctrl.max}" step="${ctrl.step}"
+             value="${Number(val).toFixed(0)}" data-name="${ctrl.name}">`;
+    const input = div.querySelector('input');
+    input.addEventListener('change', () => { applyCamSetting(ctrl.name, parseFloat(input.value)); });
+    container.appendChild(div);
+  }
+}
+
+async function loadCamConfig() {
+  const host = document.getElementById('host').value;
+  try {
+    const r = await fetch(`http://${host}/camera-config`, {signal: AbortSignal.timeout(2000)});
+    const cfg = await r.json();
+    buildCamControls(cfg);
+  } catch(e) {
+    document.getElementById('cam-controls').innerHTML = '<div style="color:#ff6b6b;font-size:11px">Failed to load config</div>';
+  }
+}
+
+async function applyCamSetting(name, value) {
+  const host = document.getElementById('host').value;
+  try {
+    await fetch(`http://${host}/camera-config`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({[name]: value}),
+      signal: AbortSignal.timeout(2000),
+    });
+  } catch(e) {}
+}
+
+function toggleCamPanel() {
+  const panel = document.getElementById('cam-panel');
+  if (panel.style.display === 'none' || !panel.style.display) {
+    panel.style.display = 'block';
+    loadCamConfig();
+  } else {
+    panel.style.display = 'none';
+  }
+}
+
+document.getElementById('cam-btn').addEventListener('click', toggleCamPanel);
+document.getElementById('cam-close').addEventListener('click', () => {
+  document.getElementById('cam-panel').style.display = 'none';
+});
+document.getElementById('cam-reload').addEventListener('click', loadCamConfig);
 
 // Angle gauges
 function drawGauge(canvasId, imuAngle, camAngle, sumAngle, label) {

@@ -3,12 +3,15 @@
 ## Architecture
 RPi + Camera = Visual GPS emulator. Detects markers, calculates position, sends GPS_INPUT to FC. FC handles everything else — barometer for altitude, vision for XY and yaw.
 
-## Current Status (2026-03-30)
+## Current Status (2026-03-31)
 
-### System: Multi-Marker GPS Emulation with MAVLink2
+### System: Multi-Marker GPS Emulation with MAVLink2 (NED)
 GPS_INPUT mode with angle-based position estimation. IMU pitch/roll corrects for drone tilt,
 vision provides yaw and tvec. Camera level calibration removes static mounting tilt.
 solvePnP IPPE ambiguity resolved with marker Z verticality check.
+
+**NED coordinate system** (North-East-Down) throughout the codebase — standard aviation convention.
+No sign hacks: lat = origin + north/111111, lon = origin + east/111111*cos, yaw = atan2(East, North).
 
 **18 markers deployed** (IDs 0-17) across faculty building corridor (L-shaped layout).
 MAVLink2 enabled for GPS yaw support. FC position feedback via GLOBAL_POSITION_INT.
@@ -107,7 +110,7 @@ VISO_TYPE = 0           # Disabled
 ### Coverage
 1. [x] **Multi-marker deployment** — 18 markers (IDs 0-17) deployed across faculty corridor
 2. [ ] **Loiter mode testing** — after althold is reliable
-3. [ ] **Marker orientation verification** — confirm 180° orientation matches physical mounting
+3. [ ] **Marker orientation verification** — confirm 0° orientation matches physical mounting (NED)
 
 ## File Structure
 ```
@@ -123,4 +126,4 @@ viewer/samples/                          - Sample mission files for testing
 
 ---
 
-*Last updated: 2026-03-30*
+*Last updated: 2026-03-31*

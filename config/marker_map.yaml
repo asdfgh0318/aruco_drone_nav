@@ -2,10 +2,10 @@
 # Maps ArUco marker IDs to their world coordinates (ceiling positions)
 # Generated from GLB viewer on 2026-03-30
 #
-# Coordinate system (ENU):
-#   X: East (positive)
-#   Y: North (positive)
-#   Z: Up (positive) - ceiling height
+# Coordinate system (NED):
+#   X: North (positive)
+#   Y: East (positive)
+#   Z: Down (positive)
 #
 # Origin (0, 0, 0) is on the floor at the starting/takeoff position
 
@@ -23,73 +23,73 @@ ceiling_height: 2.0
 # Generate with: python tools/generate_markers.py --ids 0-17 --dictionary DICT_4X4_50 --size 18
 markers:
   - id: 0
-    position: [7.14, 4.85, -1.98]
+    position: [4.85, 7.14, 1.98]
     orientation: 180
 
   - id: 1
-    position: [7.09, 3.68, -1.89]
+    position: [3.68, 7.09, 1.89]
     orientation: 180
 
   - id: 2
-    position: [7.13, 2.56, -1.88]
+    position: [2.56, 7.13, 1.88]
     orientation: 180
 
   - id: 3
-    position: [7.17, 1.61, -1.93]
+    position: [1.61, 7.17, 1.93]
     orientation: 180
 
   - id: 4
-    position: [7.24, 0.79, -1.93]
+    position: [0.79, 7.24, 1.93]
     orientation: 180
 
   - id: 5
-    position: [7.28, 0.25, -1.96]
+    position: [0.25, 7.28, 1.96]
     orientation: 180
 
   - id: 6
-    position: [7.34, -0.57, -2.19]
+    position: [-0.57, 7.34, 2.19]
     orientation: 180
 
   - id: 7
-    position: [7.43, -1.34, -2.20]
+    position: [-1.34, 7.43, 2.20]
     orientation: 180
 
   - id: 8
-    position: [7.44, -2.04, -2.14]
+    position: [-2.04, 7.44, 2.14]
     orientation: 180
 
   - id: 9
-    position: [6.64, -2.10, -2.13]
+    position: [-2.10, 6.64, 2.13]
     orientation: 180
 
   - id: 10
-    position: [5.77, -2.13, -2.13]
+    position: [-2.13, 5.77, 2.13]
     orientation: 180
 
   - id: 11
-    position: [5.27, -2.18, -2.13]
+    position: [-2.18, 5.27, 2.13]
     orientation: 180
 
   - id: 12
-    position: [4.43, -2.23, -1.73]
+    position: [-2.23, 4.43, 1.73]
     orientation: 180
 
   - id: 13
-    position: [3.30, -2.31, -1.73]
+    position: [-2.31, 3.30, 1.73]
     orientation: 180
 
   - id: 14
-    position: [2.84, -2.34, -1.81]
+    position: [-2.34, 2.84, 1.81]
     orientation: 180
 
   - id: 15
-    position: [2.32, -2.39, -1.75]
+    position: [-2.39, 2.32, 1.75]
     orientation: 180
 
   - id: 16
-    position: [1.85, -2.48, -2.18]
+    position: [-2.48, 1.85, 2.18]
     orientation: 180
 
   - id: 17
-    position: [1.31, -2.40, -1.71]
+    position: [-2.40, 1.31, 1.71]
     orientation: 180

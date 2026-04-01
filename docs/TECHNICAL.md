@@ -96,13 +96,6 @@ Low-pass filter (alpha=0.7) with yaw wraparound handling.
 
 ## Coordinate Frames
 
-### MAVLink Conversion (ENU to NED)
-```python
-mavlink_x = enu_y    # North = ENU Y
-mavlink_y = enu_x    # East = ENU X
-mavlink_z = -enu_z   # Down = -ENU Z
-```
-
 ## HTTP API (Stream Mode)
 
 **GET /position** - JSON with position and timing data
@@ -114,7 +107,7 @@ mavlink_z = -enu_z   # Down = -ENU Z
 
 The VR drone path planner uses Unity model-local coordinates:
 - **Unity**: X=East, Y=Up, Z=North
-- **ArduPilot NED**: X=North, Y=East, Z=Down
+- **NED**: X=North, Y=East, Z=Down
 
 Verified by checking `detailedSegments`: `verticalChange == |dY|` and
 `lengthHorizontal == sqrt(dX² + dZ²)` for all segments. Yaw is CW from +Z (North).
@@ -127,14 +120,14 @@ Unity → NED:
   alt_rel   = Unity.Y     (Y is up = altitude above model origin)
 
 NED → Unity (reverse):
-  Unity.X = NED.East       (NED.Y)
-  Unity.Y = -NED.Down      (-NED.Z)
-  Unity.Z = NED.North      (NED.X)
+  Unity.X = NED.East
+  Unity.Y = -NED.Down
+  Unity.Z = NED.North
 ```
 
 Yaw: both systems use clockwise-from-North (Unity measures CW from +Z) — no remapping needed.
 
-### NED to fake lat/lon (indoor missions)
+### NED to lat/lon (indoor missions)
 ```python
 lat = origin_lat + north_m / 111111.0
 lon = origin_lon + east_m / (111111.0 * cos(origin_lat_rad))

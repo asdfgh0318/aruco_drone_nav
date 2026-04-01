@@ -240,7 +240,7 @@ body { overflow: hidden; background: #1a1a2e; font-family: -apple-system, BlinkM
   <div class="panel" id="info-panel">
     <div><b>Clicked Point</b></div>
     <div>Unity: <span id="info-unity">—</span></div>
-    <div>NED: <span id="info-ned">—</span></div>
+    <div>NED: <span id="info-enu">—</span></div>
     <div>Alt: <span id="info-alt">—</span></div>
   </div>
 
@@ -393,7 +393,7 @@ animate();
 function fmtN(v, d = 3) { return v.toFixed(d); }
 
 function unityToNED(p) {
-  return { n: p.z, e: p.x, d: -p.y, alt: p.y };
+  return { n: p.z, e: p.x, d: -p.y };
 }
 
 function getOrigin() {
@@ -826,18 +826,18 @@ function updateStats(newData) {
 
 // ── Marker Placement System ──
 let markerPlacementMode = false;
-let placedMarkers = []; // [{id, enu: [e, n, u], orientation: 0, scenePt: {x,y,z}}]
+let placedMarkers = []; // [{id, ned: [n, e, d], orientation: 0, scenePt: {x,y,z}}]
 let markerGroup = new THREE.Group();
 markerGroup.name = 'markers';
 scene.add(markerGroup);
 
-function sceneToENU(p) {
-  // scene → unity → ENU
-  return { e: -p.x, n: p.z, u: p.y };
+function sceneToNED(p) {
+  // scene → unity → NED
+  return { n: p.z, e: -p.x, d: -p.y };
 }
 
-function enuToScene(e, n, u) {
-  return { x: -e, y: u, z: n };
+function nedToScene(n, e, d) {
+  return { x: -e, y: -d, z: n };
 }
 
 function createMarker3D(id, scenePt, ceilingHeight) {
@@ -903,11 +903,11 @@ function createMarker3D(id, scenePt, ceilingHeight) {
   return group;
 }
 
-function addPlacedMarker(id, enu, scenePt) {
+function addPlacedMarker(id, ned, scenePt) {
   const ceilingH = parseFloat(document.getElementById('mp-ceiling').value) || 3.0;
   const m3d = createMarker3D(id, scenePt, ceilingH);
   markerGroup.add(m3d);
-  placedMarkers.push({ id, enu: [enu.e, enu.n, enu.u], orientation: 0, scenePt, mesh: m3d });
+  placedMarkers.push({ id, ned: [ned.n, ned.e, ned.d], orientation: 0, scenePt, mesh: m3d });
   updateMarkerPanel();
   // Auto-increment next ID
   const nextIdEl = document.getElementById('mp-next-id');
@@ -933,7 +933,7 @@ function updateMarkerPanel() {
     list.innerHTML = placedMarkers.map(m =>
       `<div class="marker-item">
         <span class="mi-id">M${m.id}</span>
-        <span class="mi-coords">E:${m.enu[0].toFixed(2)} N:${m.enu[1].toFixed(2)} H:${m.enu[2].toFixed(2)}</span>
+        <span class="mi-coords">N:${m.ned[0].toFixed(2)} E:${m.ned[1].toFixed(2)} D:${m.ned[2].toFixed(2)}</span>
         <span class="mi-del" data-id="${m.id}" title="Remove">&#x2715;</span>
       </div>`
     ).join('');
@@ -962,18 +962,18 @@ function exportMarkerYaml() {
   const override = document.getElementById('mp-ceiling-override').checked;
   const ceilingH = parseFloat(document.getElementById('mp-ceiling').value) || 3.0;
   const sorted = [...placedMarkers].sort((a, b) => a.id - b.id);
-  const maxZ = sorted.length ? Math.max(...sorted.map(m => m.enu[2])) : ceilingH;
+  const maxD = sorted.length ? Math.max(...sorted.map(m => m.ned[2])) : ceilingH;
   let yaml = `# ArUco Marker Map Configuration\n`;
   yaml += `# Generated from GLB viewer on ${new Date().toISOString().slice(0,10)}\n`;
-  yaml += `#\n# Coordinate system (ENU):\n#   X: East (positive)\n#   Y: North (positive)\n#   Z: Up (positive) - ceiling height\n\n`;
+  yaml += `#\n# Coordinate system (NED):\n#   X: North (positive)\n#   Y: East (positive)\n#   Z: Down (positive)\n\n`;
   yaml += `origin:\n  description: "Takeoff position on the floor"\n  x: 0.0\n  y: 0.0\n  z: 0.0\n\n`;
-  yaml += `ceiling_height: ${(override ? ceilingH : maxZ).toFixed(1)}\n\n`;
+  yaml += `ceiling_height: ${(override ? ceilingH : maxD).toFixed(1)}\n\n`;
   yaml += `# ArUco markers (DICT_4X4_50, printed on A4 at 18cm)\n`;
   yaml += `markers:\n`;
   for (const m of sorted) {
-    const z = override ? ceilingH : m.enu[2];
+    const d = override ? ceilingH : m.ned[2];
     yaml += `  - id: ${m.id}\n`;
-    yaml += `    position: [${m.enu[0].toFixed(2)}, ${m.enu[1].toFixed(2)}, ${z.toFixed(2)}]\n`;
+    yaml += `    position: [${m.ned[0].toFixed(2)}, ${m.ned[1].toFixed(2)}, ${d.toFixed(2)}]\n`;
     yaml += `    orientation: ${m.orientation}\n\n`;
   }
   downloadFile(yaml, 'marker_map.yaml');
@@ -1016,12 +1016,12 @@ function importMarkerYaml(text) {
 
 function finalizeImportedMarker(m, ceilingH) {
   if (!m.position) return;
-  const enu = { e: m.position[0], n: m.position[1], u: m.position[2] };
-  const sp = enuToScene(enu.e, enu.n, enu.u);
+  const ned = { n: m.position[0], e: m.position[1], d: m.position[2] };
+  const sp = nedToScene(ned.n, ned.e, ned.d);
   const scenePt = { x: sp.x, y: sp.y, z: sp.z };
   const m3d = createMarker3D(m.id, scenePt, ceilingH);
   markerGroup.add(m3d);
-  placedMarkers.push({ id: m.id, enu: [enu.e, enu.n, enu.u], orientation: m.orientation, scenePt, mesh: m3d });
+  placedMarkers.push({ id: m.id, ned: [ned.n, ned.e, ned.d], orientation: m.orientation, scenePt, mesh: m3d });
 }
 
 // Marker panel events
@@ -1056,12 +1056,12 @@ renderer.domElement.addEventListener('click', (e) => {
 
     if (markerPlacementMode) {
       // Place a marker at this point
-      const enu = sceneToENU(p);
+      const ned = sceneToNED(p);
       const id = parseInt(document.getElementById('mp-next-id').value) || 0;
       if (placedMarkers.some(m => m.id === id)) {
         removeMarker(id); // replace existing
       }
-      addPlacedMarker(id, enu, { x: p.x, y: p.y, z: p.z });
+      addPlacedMarker(id, ned, { x: p.x, y: p.y, z: p.z });
     } else {
       clickMarker.position.copy(p);
       clickMarker.visible = true;
@@ -1071,9 +1071,9 @@ renderer.domElement.addEventListener('click', (e) => {
       const ned = unityToNED(unity);
       document.getElementById('info-unity').textContent =
         `X=${fmtN(unity.x)}, Y=${fmtN(unity.y)}, Z=${fmtN(unity.z)}`;
-      document.getElementById('info-ned').textContent =
+      document.getElementById('info-enu').textContent =
         `N=${fmtN(ned.n)}, E=${fmtN(ned.e)}, D=${fmtN(ned.d)}`;
-      document.getElementById('info-alt').textContent = `${fmtN(ned.alt)} m`;
+      document.getElementById('info-alt').textContent = `${fmtN(-ned.d)} m`;
 
       document.getElementById('info-panel').style.display = 'block';
       repositionLegend();
@@ -1431,7 +1431,7 @@ window.addEventListener('resize', () => {
     { target: '#convert-panel', title: 'Convert Panel',
       body: 'Press <b>C</b> to open. Converts VR planner <b>JSON → .waypoints</b> for ArduPilot. Set alt offset and 360° loiter time, then click the button to download.' },
     { target: '#marker-panel', title: 'Marker Placement',
-      body: 'Press <b>M</b> to toggle marker placement mode. Click on the ceiling in the 3D model to place ArUco markers. Each marker gets an ID and ENU coordinates. The orange arrow shows the marker orientation (glued to ceiling, facing down). <b>Import</b> an existing YAML or <b>Export</b> to <code>marker_map.yaml</code>.' },
+      body: 'Press <b>M</b> to toggle marker placement mode. Click on the ceiling in the 3D model to place ArUco markers. Each marker gets an ID and NED coordinates. The orange arrow shows the marker orientation (glued to ceiling, facing down). <b>Import</b> an existing YAML or <b>Export</b> to <code>marker_map.yaml</code>.' },
     { target: null, title: 'Keyboard Shortcuts',
       body: 'Quick keys: <b>R</b> reset camera, <b>G</b> grid, <b>T</b> trajectory, <b>W</b> waypoints, <b>A</b> ArduPilot, <b>C</b> convert panel, <b>M</b> markers. Press <b>?</b> anytime to replay this tour.' },
   ];

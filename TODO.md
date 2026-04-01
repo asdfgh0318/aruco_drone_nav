@@ -41,16 +41,27 @@
 ### Coverage
 - [x] **Multi-marker deployment** — 18 markers (IDs 0-17) deployed across faculty building
 - [ ] **Full corridor flight test** — test navigation across all 18 markers
-- [ ] **Marker orientation tuning** — verify 180° orientation produces correct yaw
+- [ ] **Marker orientation tuning** — verify 0° orientation produces correct yaw (NED convention)
 
 ## Completed
+
+### Session 2026-03-31: ENU to NED Coordinate System Migration
+- [x] Migrated entire codebase from ENU (East-North-Up) to NED (North-East-Down)
+- [x] marker_map.yaml: positions swapped [E,N,U] → [N,E,D], orientation 90→0
+- [x] vision_gps.py: NED output, removed yaw -90 hack, NED FC readback
+- [x] mavlink_bridge.py: send_gps_input(north, east, down) — clean lat/lon conversion
+- [x] live_map.html: NED position display, w2c(n,e), compass-style marker arrows
+- [x] terminal_map.py, orientation_check.py: NED API
+- [x] glb_viewer.html: NED export/import, sceneToNED/nedToScene
+- [x] All docs updated (pipeline_debug, position_pipeline, site, TECHNICAL, GLB_VIEWER)
+- [x] Eliminated Y negation hacks and yaw -90 offset — NED is self-consistent
 
 ### Session 2026-03-30: Multi-Marker Deployment + MAVLink2 + Marker Placement Tool
 - [x] Multi-marker map: 18 markers (IDs 0-17) placed via GLB viewer across faculty corridor
 - [x] GLB viewer marker placement mode (M key): click ceiling to place, YAML import/export
 - [x] Per-marker height from click point with optional fixed override
 - [x] MAVLink2 enabled (`mavlink20=True`) — fixes GPS_INPUT yaw (was MAVLink1 extension, silently dropped)
-- [x] FC position feedback: GLOBAL_POSITION_INT → ENU → second drone arrow on live map
+- [x] FC position feedback: GLOBAL_POSITION_INT → NED → second drone arrow on live map
 - [x] Per-marker weights in position JSON and live map (green=active with %, gray=inactive)
 - [x] Live map YAML import button for marker visualization
 - [x] Live map plan view fix (North=up, East=right — was mirrored "from below" view)

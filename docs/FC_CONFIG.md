@@ -52,16 +52,6 @@ COMPASS_USE3   = 0
 2. **Vision data must be streaming** at 10+ Hz before arming
 3. **Wait for EKF to converge** -- watch for "EKF3 IMU0 origin set" message
 
-## Coordinate Frame
-
-VISION_POSITION_ESTIMATE uses NED (North-East-Down):
-- x = North (meters)
-- y = East (meters)
-- z = Down (meters, positive toward ground)
-- yaw = heading from North, clockwise (radians)
-
-The Vision GPS software converts from its internal ENU frame automatically.
-
 ## Serial Port Setup
 
 The RPi connects to the FC via UART. Set the serial port parameters for whichever UART you connect to:
@@ -112,7 +102,7 @@ Fallback modes (no position needed):
 ### "Toilet Bowl" oscillation in Loiter
 - Yaw misalignment between vision and FC
 - Increase VISO_DELAY_MS
-- Verify ENU→NED conversion is correct
+- Verify position and yaw values in MAVLink Inspector
 
 ### Position drifts when no markers visible
 - EKF coasts on inertial data, drift is expected

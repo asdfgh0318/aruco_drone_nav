@@ -1,4 +1,4 @@
-"""Minimal MAVLink bridge - sends vision position or GPS emulation to flight controller."""
+"""Minimal MAVLink bridge - sends GPS_INPUT to flight controller."""
 
 import math
 import time
@@ -21,8 +21,6 @@ class MAVLinkBridge:
         self._last_heartbeat = 0.0
         self.attitude = None  # (roll, pitch, yaw) in radians
         self.fc_position = None  # (lat, lon, alt, yaw_deg) from FC EKF
-        self._origin = None   # (lat, lon, alt) for EKF origin
-        self._origin_set = False
 
     def connect(self, timeout=10.0):
         try:
@@ -123,44 +121,13 @@ class MAVLinkBridge:
     def is_connected(self):
         return self.conn is not None and (time.time() - self._last_heartbeat) < 3.0
 
-    def configure_origin(self, lat, lon, alt):
-        """Store EKF origin coordinates. Will be sent before first vision position."""
-        self._origin = (lat, lon, alt)
-
-    def send_vision_position(self, x, y, z, roll=0.0, pitch=0.0, yaw=0.0, confidence=1.0):
+    def send_gps_input(self, north, east, down, yaw_deg, origin_lat, origin_lon, origin_alt, confidence=1.0):
+        """Send GPS_INPUT emulating a GPS fix from NED position relative to origin."""
         if not self.conn:
             return
-        if not self._origin_set and self._origin:
-            self.set_ekf_origin(*self._origin)
-            self._origin_set = True
-        usec = int(time.time() * 1e6)
-        pos_cov = max(0.01, 0.01 / max(confidence, 0.01))
-        ang_cov = pos_cov * 2.0
-        covariance = [
-            pos_cov, 0, 0, 0, 0, 0,
-            pos_cov, 0, 0, 0, 0,
-            pos_cov, 0, 0, 0,
-            ang_cov, 0, 0,
-            ang_cov, 0,
-            ang_cov,
-        ]
-        try:
-            self.conn.mav.vision_position_estimate_send(
-                usec, x, y, z, roll, pitch, yaw, covariance, 0
-            )
-        except TypeError:
-            # Older pymavlink without covariance/reset_counter params
-            self.conn.mav.vision_position_estimate_send(
-                usec, x, y, z, roll, pitch, yaw
-            )
-
-    def send_gps_input(self, x_enu, y_enu, z_enu, yaw_deg, origin_lat, origin_lon, origin_alt, confidence=1.0):
-        """Send GPS_INPUT emulating a GPS fix from ENU position relative to origin."""
-        if not self.conn:
-            return
-        lat = origin_lat + (y_enu / 111111.0)
-        lon = origin_lon + (x_enu / (111111.0 * math.cos(math.radians(origin_lat))))
-        alt = origin_alt + z_enu
+        lat = origin_lat + (north / 111111.0)
+        lon = origin_lon + (east / (111111.0 * math.cos(math.radians(origin_lat))))
+        alt = origin_alt - down
         hdop = 0.3
         vdop = 0.5
         # yaw: GPS_INPUT expects centidegrees, 0=North, CW positive, 0-36000
@@ -193,12 +160,3 @@ class MAVLinkBridge:
             yaw_cd,                   # yaw (centidegrees)
         )
 
-    def set_ekf_origin(self, lat, lon, alt):
-        if not self.conn:
-            return
-        self.conn.mav.set_gps_global_origin_send(
-            self.target_system,
-            int(lat * 1e7), int(lon * 1e7), int(alt * 1000),
-            int(time.time() * 1e6),
-        )
-        log.info(f"EKF origin set to ({lat:.4f}, {lon:.4f}, {alt:.0f}m)")

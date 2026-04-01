@@ -44,7 +44,7 @@ No build step, no tests, no linter. The system is ~700 lines across 2 source fil
 Frame (1280x720 MJPG)
   → Gray → CLAHE → BGR → ArUco detectMarkers (~110ms)
   → solvePnP per marker (with temporal consistency)
-  → Camera→Body→World transform → ENU position + yaw
+  → Camera→Body→World transform → NED position + yaw
   → GPS_INPUT via MAVLink UART → FC
 ```
 
@@ -53,7 +53,7 @@ Frame (1280x720 MJPG)
 | File | Purpose |
 |------|---------|
 | `src/vision_gps.py` (~500 lines) | Camera capture thread, CLAHE, ArUco detection, solvePnP, position estimation, coordinate transforms, HTTP server, main loop, CSV logging |
-| `src/mavlink_bridge.py` (~200 lines) | Serial connection with PL011 bug workaround, heartbeat handshake, `send_gps_input()` (active), `send_vision_position()` (VISO fallback), EKF origin |
+| `src/mavlink_bridge.py` (~200 lines) | Serial connection with PL011 bug workaround, heartbeat handshake, `send_gps_input(north, east, down, ...)`, EKF origin |
 | `src/__main__.py` | Entry point: `from .vision_gps import main; main()` |
 
 ### Config Files
@@ -61,21 +61,19 @@ Frame (1280x720 MJPG)
 | File | Purpose |
 |------|---------|
 | `config/system_config.yaml` | Serial port/baud, camera resolution, ArUco params, `gps_emulation: true/false`, EKF origin lat/lon |
-| `config/marker_map.yaml` | Marker ID → world position (ENU) + orientation |
+| `config/marker_map.yaml` | Marker ID → world position (NED) + orientation |
 | `config/camera_params.yaml` | Intrinsics calibrated at 640×480, auto-scaled to runtime resolution |
 
 ## Critical Architecture Details
 
-### Two MAVLink Modes (controlled by `gps_emulation` in config)
+### MAVLink GPS Emulation
 
-**GPS_INPUT (active, `gps_emulation: true`):**
-- Converts ENU → lat/lon relative to origin, sends `GPS_INPUT` message
+**GPS_INPUT mode (`gps_emulation: true`):**
+- Converts NED → lat/lon relative to origin, sends `GPS_INPUT` message
 - FC params: `GPS_TYPE=14`, `EK3_SRC1_POSXY=3`, `EK3_SRC1_POSZ=1` (baro)
 - Works on any ArduCopter firmware with `AP_GPS_MAV_ENABLED`
 
-**VISION_POSITION_ESTIMATE (`gps_emulation: false`):**
-- Sends NED pose directly. Requires custom firmware + VISO FC params
-- Tagged as `viso-experimental` — ArduPilot doesn't support Z axis properly via VISO
+> The old VISION_POSITION_ESTIMATE (VISO) approach is preserved as git tag `viso-experimental` but is no longer part of the active codebase.
 
 ### Position Estimation (Angle-Based with IMU Correction)
 
@@ -88,7 +86,7 @@ world_ax = imu_pitch + (cam_ax - level_ax)    # IMU-corrected, static tilt remov
 world_ay = imu_roll + (cam_ay - level_ay)     # Same for roll axis
 body_fwd = -height * tan(world_ax)            # Body offset (cam_X = -body_fwd)
 body_right = height * tan(world_ay)           # Body offset (cam_Y = body_right)
-→ rotate by yaw → ENU world position
+→ rotate by yaw → NED world position
 ```
 
 Yaw from vision: `R_bw = R_mw @ R_cm^T @ R_CB_NOMINAL^T`, `yaw = atan2(R_bw[1,0], R_bw[0,0])`
@@ -125,7 +123,7 @@ ArduPilot does NOT stream telemetry on non-primary UARTs until it receives heart
 
 ## Hardware
 
-- **RPi**: `pi.local` / `10.40.41.251`, user `mtj`, NixOS arm64
+- **RPi**: `pi.local` / `192.168.213.251`, user `mtj`, NixOS arm64
 - **Camera**: USB, MJPG 1280×720, must lock autofocus: `v4l2-ctl --set-ctrl focus_automatic_continuous=0,focus_absolute=0`
 - **FC**: SpeedyBee F405 V3, custom firmware, UART at 115200 baud
 - **Markers**: 18cm ArUco (DICT_4X4_50) on A4 paper, ceiling-mounted

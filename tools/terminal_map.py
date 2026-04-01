@@ -22,7 +22,7 @@ import yaml
 def load_markers(path):
     with open(path) as f:
         data = yaml.safe_load(f)
-    return [{"id": m["id"], "x": m["position"][0], "y": m["position"][1]}
+    return [{"id": m["id"], "n": m["position"][0], "e": m["position"][1]}
             for m in data.get("markers", [])]
 
 
@@ -50,8 +50,8 @@ class TerminalMap:
         self._running = False
         self._lock = threading.Lock()
         # World bounds (meters) — auto-fit markers with margin
-        xs = [m["x"] for m in markers] + [0]
-        ys = [m["y"] for m in markers] + [0]
+        xs = [m["e"] for m in markers] + [0]  # East = horizontal
+        ys = [m["n"] for m in markers] + [0]  # North = vertical
         margin = 1.5
         self.bounds = [min(xs) - margin, max(xs) + margin,
                        min(ys) - margin, max(ys) + margin]
@@ -65,12 +65,12 @@ class TerminalMap:
                     self.data = d
                     self.connected = True
                     self.error = ""
-                    if d.get("x") is not None:
-                        x, y = d["x"], d["y"]
+                    if d.get("n") is not None:
+                        e, n = d["e"], d["n"]
                         if not self.trail or (
-                            (x - self.trail[-1][0])**2 + (y - self.trail[-1][1])**2 > 0.0001
+                            (e - self.trail[-1][0])**2 + (n - self.trail[-1][1])**2 > 0.0001
                         ):
-                            self.trail.append((x, y))
+                            self.trail.append((e, n))
             except (URLError, Exception) as e:
                 with self._lock:
                     self.connected = False
@@ -155,7 +155,7 @@ class TerminalMap:
 
             # Draw markers
             for m in self.markers:
-                mr, mc = self.world_to_map(m["x"], m["y"], map_w, map_h)
+                mr, mc = self.world_to_map(m["e"], m["n"], map_w, map_h)
                 mr += 1
                 label = f"M{m['id']}"
                 try:
@@ -174,8 +174,8 @@ class TerminalMap:
                     pass
 
             # Draw drone
-            if data and data.get("x") is not None:
-                dr, dc = self.world_to_map(data["x"], data["y"], map_w, map_h)
+            if data and data.get("n") is not None:
+                dr, dc = self.world_to_map(data["e"], data["n"], map_w, map_h)
                 dr += 1
                 yaw = data.get("yaw", 0)
                 ch = yaw_char(yaw)
@@ -203,10 +203,10 @@ class TerminalMap:
                     if error:
                         stat("", error[:stats_w], 3)
                 elif data:
-                    if data.get("x") is not None:
-                        stat(" x", f"{data['x']:+.3f}m")
-                        stat(" y", f"{data['y']:+.3f}m")
-                        stat(" z", f"{data['z']:.3f}m")
+                    if data.get("n") is not None:
+                        stat(" N", f"{data['n']:+.3f}m")
+                        stat(" E", f"{data['e']:+.3f}m")
+                        stat(" D", f"{data['d']:.3f}m")
                         stat("yaw", f"{data.get('yaw', 0):+.1f} deg")
                         stat("conf", f"{data.get('confidence', 0):.2f}")
                     else:

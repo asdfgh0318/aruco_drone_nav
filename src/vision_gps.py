@@ -18,7 +18,7 @@ import yaml
 log = logging.getLogger(__name__)
 
 Detection = namedtuple("Detection", "marker_id rvec tvec distance timestamp centroid")
-DroneState = namedtuple("DroneState", "x y z yaw marker_ids confidence timestamp marker_weights")
+DroneState = namedtuple("DroneState", "n e d yaw marker_ids confidence timestamp marker_weights")
 
 # --- Config loaders ---
 
@@ -98,6 +98,42 @@ class Camera:
     def get_frame(self):
         with self._lock:
             return self._frame.copy() if self._frame is not None else None
+
+    # Camera controls exposed for live tuning
+    _CONTROLS = {
+        "brightness":  cv2.CAP_PROP_BRIGHTNESS,
+        "contrast":    cv2.CAP_PROP_CONTRAST,
+        "saturation":  cv2.CAP_PROP_SATURATION,
+        "gain":        cv2.CAP_PROP_GAIN,
+        "exposure":    cv2.CAP_PROP_EXPOSURE,
+        "auto_exposure": cv2.CAP_PROP_AUTO_EXPOSURE,
+        "focus":       cv2.CAP_PROP_FOCUS,
+        "autofocus":   cv2.CAP_PROP_AUTOFOCUS,
+        "white_balance": cv2.CAP_PROP_WB_TEMPERATURE,
+        "auto_wb":     cv2.CAP_PROP_AUTO_WB,
+        "sharpness":   cv2.CAP_PROP_SHARPNESS,
+    }
+
+    def get_config(self):
+        if not self._cap:
+            return {}
+        cfg = {}
+        for name, prop in self._CONTROLS.items():
+            val = self._cap.get(prop)
+            if val != -1 and val != 0.0 or name in ("brightness", "focus", "autofocus", "auto_wb"):
+                cfg[name] = val
+        return cfg
+
+    def set_config(self, settings):
+        if not self._cap:
+            return {}
+        applied = {}
+        for name, val in settings.items():
+            if name in self._CONTROLS:
+                self._cap.set(self._CONTROLS[name], float(val))
+                applied[name] = self._cap.get(self._CONTROLS[name])
+                log.info(f"Camera {name} = {applied[name]}")
+        return applied
 
     def _capture_loop(self):
         while self._running and self._cap:
@@ -230,7 +266,7 @@ def detect(frame, clahe, detector, cam_matrix, dist_coeffs, marker_size):
 
 # Nominal camera-to-body rotation (physical mounting, upward-facing camera)
 # cam_-X → body forward, cam_Y → body right, cam_Z → body up
-R_CB_NOMINAL = np.array([[-1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=float)
+R_CB_NOMINAL = np.array([[-1, 0, 0], [0, 1, 0], [0, 0, -1]], dtype=float)  # det=+1, proper rotation (180° around Y)
 
 # R_CB will be set at startup: R_CB_NOMINAL @ R_tilt (from level calibration)
 R_CB = R_CB_NOMINAL.copy()
@@ -271,11 +307,12 @@ def compute_R_CB(level_tvec):
 
 
 def marker_to_world_rotation(orientation_deg):
-    """Fixed rotation from marker frame to world (ENU) for ceiling-mounted marker.
-    Marker Z+ (out of face) points down → world -Z."""
+    """Fixed rotation from marker frame to world (NED) for ceiling-mounted marker.
+    orientation_deg: physical direction of marker top edge (NED compass, as seen from below).
+    Subtract 180° because face-down mounting flips the detected marker frame vs physical."""
     theta = np.radians(orientation_deg)
     c, s = np.cos(theta), np.sin(theta)
-    return np.array([[c, -s, 0], [s, c, 0], [0, 0, -1]])
+    return np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
 
 
 def estimate_single(detection, marker_cfg, imu_attitude=None):
@@ -289,9 +326,11 @@ def estimate_single(detection, marker_cfg, imu_attitude=None):
     # Yaw: from vision (in-plane rotation is well-conditioned even at perpendicular viewing)
     R_bw = R_mw @ R_cm.T @ R_CB_NOMINAL.T
     yaw = np.arctan2(R_bw[1, 0], R_bw[0, 0])
+    # DEBUG: log yaw chain
+    _v = R_cm.T @ R_CB_NOMINAL.T[:, 0]
+    log.debug(f"YAW_DEBUG: R_cm[0,:]={R_cm[0,:]}, v={_v}, R_bw_col0={R_bw[:,0]}, yaw_rad={yaw:.3f} yaw_deg={np.degrees(yaw):.1f}")
 
-    # Position: angle-based (same math as the stable SUM needle).
-    # Avoids R_CB matrix multiplication (det=-1 breaks IMU correction).
+    # Position: angle-based (avoids full R_CB rotation chain for better stability).
     cam_ax = np.arctan2(tvec[0], tvec[2])  # marker angle along camera X
     cam_ay = np.arctan2(tvec[1], tvec[2])  # marker angle along camera Y
     height = float(np.linalg.norm(tvec))
@@ -315,18 +354,20 @@ def estimate_single(detection, marker_cfg, imu_attitude=None):
     # Body-frame offset (cam_X = -body_fwd, cam_Y = body_right)
     body_fwd = -height * np.tan(world_ax)
     body_right = height * np.tan(world_ay)
-    body_up = -(height - marker_pos[2])
+    body_down = -height  # marker is above drone → negative down
+    estimate_single._debug_body = (body_fwd, body_right, body_down)
 
-    # Rotate by yaw to world (ENU)
+    # Rotate body offset to world and subtract from marker pos to get drone pos
+    # (body_fwd/right point from drone toward marker; drone = marker - offset)
     cy, sy = np.cos(yaw), np.sin(yaw)
-    pos = marker_pos + np.array([
-        cy * body_fwd - sy * body_right,
-        sy * body_fwd + cy * body_right,
-        body_up,
+    pos = marker_pos - np.array([
+        cy * body_fwd - sy * body_right,  # North
+        sy * body_fwd + cy * body_right,  # East
+        body_down,                         # Down
     ])
 
-    # Convert yaw: R_CB det=-1 (reflection) → arctan2 gives CW from East.
-    yaw_compass = np.degrees(yaw) - 90.0
+    # In NED, atan2(R_bw[1,0], R_bw[0,0]) = atan2(East, North) = compass heading directly
+    yaw_compass = np.degrees(yaw)
     return pos, yaw_compass
 
 
@@ -361,7 +402,7 @@ def estimate_position(detections, marker_map, last_state, cam_matrix, alpha=0.3,
 
     # Low-pass filter
     if last_state is not None:
-        prev_pos = np.array([last_state.x, last_state.y, last_state.z])
+        prev_pos = np.array([last_state.n, last_state.e, last_state.d])
         pos = alpha * pos + (1 - alpha) * prev_pos
         yaw_diff = yaw - last_state.yaw
         if yaw_diff > 180: yaw_diff -= 360
@@ -379,6 +420,7 @@ class PositionServer:
         self.state = None
         self.frame_jpeg = None
         self.marker_map = {}
+        self.camera = None
         self._origin_lat = None
         self._origin_lon = None
         self.stats = {"frames": 0, "detections": 0, "start": time.time(), "timing": {}}
@@ -386,7 +428,7 @@ class PositionServer:
         self._server = None
 
     def update(self, state, frames, detections, debug_frame=None, timing=None,
-               imu_attitude=None, cam_angles=None, fc_position=None):
+               imu_attitude=None, cam_angles=None, fc_position=None, body_tvec=None, body_offset=None):
         with self._lock:
             self.state = state
             self.stats["frames"] = frames
@@ -396,6 +438,8 @@ class PositionServer:
             self.stats["imu"] = imu_attitude
             self.stats["cam_angles"] = cam_angles
             self.stats["fc_position"] = fc_position
+            self.stats["body_tvec"] = body_tvec
+            self.stats["body_offset"] = body_offset
             if debug_frame is not None:
                 _, jpg = cv2.imencode(".jpg", debug_frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
                 self.frame_jpeg = jpg.tobytes()
@@ -408,7 +452,7 @@ class PositionServer:
                     "detection_rate": round(dc / max(1, fc), 2),
                     "uptime": round(time.time() - st["start"], 1), "timing": st["timing"]}
             if s:
-                base.update({"x": round(s.x, 3), "y": round(s.y, 3), "z": round(s.z, 3),
+                base.update({"n": round(s.n, 3), "e": round(s.e, 3), "d": round(s.d, 3),
                              "yaw": round(s.yaw, 1), "marker_ids": s.marker_ids,
                              "confidence": round(s.confidence, 2),
                              "marker_weights": s.marker_weights})
@@ -420,13 +464,23 @@ class PositionServer:
             if cam:
                 base["cam_pitch"] = round(cam[0], 2)
                 base["cam_roll"] = round(cam[1], 2)
+            bt = st.get("body_tvec")
+            if bt is not None:
+                base["body_tvec"] = {"fwd": round(float(bt[0]), 3),
+                                     "right": round(float(bt[1]), 3),
+                                     "down": round(float(bt[2]), 3)}
+            bo = st.get("body_offset")
+            if bo is not None:
+                base["body_offset"] = {"fwd": round(float(bo[0]), 3),
+                                       "right": round(float(bo[1]), 3),
+                                       "down": round(float(bo[2]), 3)}
             fc = st.get("fc_position")
             if fc and self._origin_lat is not None:
                 fc_lat, fc_lon, fc_alt, fc_yaw = fc
-                fc_x = (fc_lon - self._origin_lon) * 111111.0 * np.cos(np.radians(self._origin_lat))
-                fc_y = (fc_lat - self._origin_lat) * 111111.0
-                base["fc"] = {"x": round(fc_x, 3), "y": round(fc_y, 3),
-                              "z": round(fc_alt, 3), "yaw": round(fc_yaw, 1)}
+                fc_n = (fc_lat - self._origin_lat) * 111111.0
+                fc_e = (fc_lon - self._origin_lon) * 111111.0 * np.cos(np.radians(self._origin_lat))
+                base["fc"] = {"n": round(fc_n, 3), "e": round(fc_e, 3),
+                              "d": round(-fc_alt, 3), "yaw": round(fc_yaw, 1)}
             return json.dumps(base)
 
     def start(self):
@@ -441,8 +495,8 @@ class PositionServer:
                     self.end_headers()
                     self.wfile.write(ref._json().encode())
                 elif self.path == "/markers":
-                    data = [{"id": int(k), "x": float(v["position"][0]), "y": float(v["position"][1]),
-                             "z": float(v["position"][2])} for k, v in ref.marker_map.items()]
+                    data = [{"id": int(k), "n": float(v["position"][0]), "e": float(v["position"][1]),
+                             "d": float(v["position"][2])} for k, v in ref.marker_map.items()]
                     self.send_response(200)
                     self.send_header("Content-Type", "application/json")
                     self.send_header("Access-Control-Allow-Origin", "*")
@@ -455,12 +509,45 @@ class PositionServer:
                         self.send_response(200)
                         self.send_header("Content-Type", "image/jpeg")
                         self.send_header("Cache-Control", "no-cache")
+                        self.send_header("Access-Control-Allow-Origin", "*")
                         self.end_headers()
                         self.wfile.write(jpg)
                     else:
-                        self.send_error(503)
+                        self.send_response(503)
+                        self.send_header("Access-Control-Allow-Origin", "*")
+                        self.end_headers()
+                        self.wfile.write(b"No frame")
+                elif self.path == "/camera-config":
+                    cfg = ref.camera.get_config() if ref.camera else {}
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.end_headers()
+                    self.wfile.write(json.dumps(cfg).encode())
                 else:
                     self.send_error(404)
+            def do_POST(self):
+                if self.path == "/camera-config":
+                    length = int(self.headers.get("Content-Length", 0))
+                    body = self.rfile.read(length) if length else b"{}"
+                    try:
+                        settings = json.loads(body)
+                    except Exception:
+                        self.send_error(400); return
+                    applied = ref.camera.set_config(settings) if ref.camera else {}
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.end_headers()
+                    self.wfile.write(json.dumps(applied).encode())
+                else:
+                    self.send_error(404)
+            def do_OPTIONS(self):
+                self.send_response(204)
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+                self.send_header("Access-Control-Allow-Headers", "Content-Type")
+                self.end_headers()
         class ReusableHTTPServer(HTTPServer):
             allow_reuse_address = True
         self._server = ReusableHTTPServer(("0.0.0.0", self.port), H)
@@ -518,6 +605,11 @@ def main():
         sys.exit(1)
     loop_period = 1.0 / cfg.get("control", {}).get("loop_rate_hz", 20)
 
+    origin = cfg.get("ekf_origin", {})
+    origin_lat = origin.get("lat", 52.2297)
+    origin_lon = origin.get("lon", 21.0122)
+    origin_alt = origin.get("alt", 100.0)
+
     mavlink = None
     if args.mode == "run":
         from .mavlink_bridge import MAVLinkBridge
@@ -526,19 +618,11 @@ def main():
         if not mavlink.connect(timeout=30.0):
             log.error("Failed to connect to flight controller")
             sys.exit(1)
-        origin = cfg.get("ekf_origin", {})
-        origin_lat = origin.get("lat", 52.2297)
-        origin_lon = origin.get("lon", 21.0122)
-        origin_alt = origin.get("alt", 100.0)
-        gps_mode = cfg.get("gps_emulation", True)
-        if gps_mode:
-            log.info("Using GPS emulation mode")
-        else:
-            mavlink.configure_origin(origin_lat, origin_lon, origin_alt)
-            log.info("Using VISION_POSITION_ESTIMATE mode")
+        log.info("Using GPS emulation mode")
 
     server = PositionServer(port=args.port)
     server.marker_map = marker_map
+    server.camera = camera
     server._origin_lat = origin_lat
     server._origin_lon = origin_lon
     server.start()
@@ -551,7 +635,7 @@ def main():
     csv_path = Path(__file__).parent.parent / "debug_log.csv"
     csv_file = open(csv_path, "w")
     csv_file.write("frame,time,marker_id,cx,cy,tvec_x,tvec_y,tvec_z,"
-                   "rvec_x,rvec_y,rvec_z,pos_x,pos_y,pos_z,yaw\n")
+                   "rvec_x,rvec_y,rvec_z,pos_n,pos_e,pos_d,yaw\n")
     log.info(f"Debug CSV: {csv_path}")
 
     log.info(f"Running Vision GPS ({args.mode} mode)")
@@ -577,7 +661,7 @@ def main():
                     last_state = state
                 # Log raw data
                 for d in dets:
-                    sp = f"{state.x:.4f},{state.y:.4f},{state.z:.4f},{state.yaw:.2f}" if state else ",,,"
+                    sp = f"{state.n:.4f},{state.e:.4f},{state.d:.4f},{state.yaw:.2f}" if state else ",,,"
                     csv_file.write(
                         f"{frames},{time.time():.3f},{d.marker_id},"
                         f"{d.centroid[0]:.1f},{d.centroid[1]:.1f},"
@@ -587,42 +671,41 @@ def main():
                     csv_file.flush()
 
             if args.mode == "run" and state and mavlink:
-                if gps_mode:
-                    mavlink.send_gps_input(
-                        x_enu=state.x, y_enu=-state.y, z_enu=state.z,
-                        yaw_deg=state.yaw, origin_lat=origin_lat,
-                        origin_lon=origin_lon, origin_alt=origin_alt,
-                        confidence=state.confidence)
-                else:
-                    mavlink.send_vision_position(
-                        x=state.y, y=state.x, z=-state.z,  # ENU -> NED
-                        yaw=np.radians(state.yaw), confidence=state.confidence)
+                mavlink.send_gps_input(
+                    north=state.n, east=state.e, down=state.d,
+                    yaw_deg=state.yaw, origin_lat=origin_lat,
+                    origin_lon=origin_lon, origin_alt=origin_alt,
+                    confidence=state.confidence)
 
             if args.mode in ("test", "run"):
                 if dets:
                     d = dets[0]
-                    t = R_CB @ d.tvec  # Display in body frame (fwd, right, up)
+                    t = R_CB @ d.tvec  # body frame: fwd, right, down
                     r = np.degrees(R_CB @ d.rvec)
                     print(f"\rtvec:({t[0]:+.2f},{t[1]:+.2f},{t[2]:+.2f}) "
                           f"rvec:({r[0]:+.1f},{r[1]:+.1f},{r[2]:+.1f})° ", end="")
                     if state:
-                        print(f"pos:({state.x:+.2f},{state.y:+.2f},{state.z:.2f}) "
+                        print(f"pos:({state.n:+.2f},{state.e:+.2f},{state.d:.2f}) "
                               f"yaw:{state.yaw:+.1f} conf:{state.confidence:.2f}", end="  ")
                 else:
                     print("\rNo markers" + " " * 60, end="")
 
             # Camera-observed angles: pitch/roll of marker from vertical in camera frame
             cam_angles = None
+            body_tvec = None
             if dets:
                 t = dets[0].tvec
                 # Pitch: forward/back tilt = atan2(tx, tz), Roll: left/right = atan2(ty, tz)
                 cam_pitch = np.degrees(np.arctan2(t[0], t[2]))
                 cam_roll = np.degrees(np.arctan2(t[1], t[2]))
                 cam_angles = (cam_pitch, cam_roll)
+                body_tvec = R_CB @ t  # body frame: [fwd, right, down]
             imu = mavlink.attitude if mavlink else None
             fc_pos = mavlink.fc_position if mavlink else None
+            body_offset = getattr(estimate_single, '_debug_body', None)
             server.update(state, frames, detections_count, frame, timing,
-                         imu_attitude=imu, cam_angles=cam_angles, fc_position=fc_pos)
+                         imu_attitude=imu, cam_angles=cam_angles, fc_position=fc_pos,
+                         body_tvec=body_tvec, body_offset=body_offset)
 
             elapsed = time.time() - t_start
             if elapsed < loop_period:

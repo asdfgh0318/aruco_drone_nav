@@ -181,9 +181,9 @@ R_yaw @         → rotate to world           <span class="tag world">world fram
   <div class="arrow">↓</div>
 
   <div class="box output">
-    <div class="label">World Position <span class="tag world">ENU</span></div>
+    <div class="label">World Position <span class="tag world">NED</span></div>
     <b>pos = marker_world_pos + cam_offset_world</b>
-    <div class="code">pos = [x_east, y_north, z_up]  # meters, ENU</div>
+    <div class="code">pos = [x_north, y_east, z_down]  # meters, NED</div>
     <div class="note">marker_world_pos from marker_map.yaml</div>
   </div>
 
@@ -191,11 +191,10 @@ R_yaw @         → rotate to world           <span class="tag world">world fram
 
   <div class="box process">
     <div class="label">Yaw Convention</div>
-    <b>yaw_compass = degrees(yaw) - 90</b>
+    <b>yaw_compass = degrees(yaw)</b>
     <div class="code">
-atan2 with det=-1 R_bw → CW from East (0=East, 90=South)<br>
-Compass convention    → CW from North (0=North, 90=East)<br>
-Offset = -90°
+In NED, atan2(R_bw[1,0], R_bw[0,0]) = atan2(East, North)<br>
+= compass heading directly (0=North, CW positive)
     </div>
   </div>
 </div>
@@ -206,11 +205,11 @@ Offset = -90°
 <div class="pipeline">
   <div class="box output">
     <div class="label">GPS_INPUT (MAVLink)</div>
-    <b>ENU → lat/lon + yaw centidegrees</b>
+    <b>NED → lat/lon + yaw centidegrees</b>
     <div class="code">
-lat = origin_lat + (y_north / 111111.0)<br>
-lon = origin_lon + (x_east / (111111.0 * cos(origin_lat)))<br>
-alt = origin_alt + z_up<br>
+lat = origin_lat + (north / 111111.0)<br>
+lon = origin_lon + (east / (111111.0 * cos(origin_lat)))<br>
+alt = origin_alt - down<br>
 yaw_cd = yaw_compass * 100  # centidegrees, 0=North CW
     </div>
     <div class="note">FC params: GPS_TYPE=14, EK3_SRC1_POSXY=3, EK3_SRC1_POSZ=1 (baro)</div>
@@ -255,7 +254,7 @@ pos = marker_pos + R_mw @ cam_in_marker
   </tr>
   <tr><td style="padding: 8px 15px;"><span class="tag cam">Camera (OpenCV)</span></td><td style="padding: 8px 15px;">Right in image</td><td style="padding: 8px 15px;">Down in image</td><td style="padding: 8px 15px;">Optical axis (up)</td></tr>
   <tr><td style="padding: 8px 15px;"><span class="tag body">Body (Drone)</span></td><td style="padding: 8px 15px;">Forward</td><td style="padding: 8px 15px;">Right</td><td style="padding: 8px 15px;">Up</td></tr>
-  <tr><td style="padding: 8px 15px;"><span class="tag world">World (ENU)</span></td><td style="padding: 8px 15px;">East</td><td style="padding: 8px 15px;">North</td><td style="padding: 8px 15px;">Up</td></tr>
+  <tr><td style="padding: 8px 15px;"><span class="tag world">World (NED)</span></td><td style="padding: 8px 15px;">North</td><td style="padding: 8px 15px;">East</td><td style="padding: 8px 15px;">Down</td></tr>
   <tr><td style="padding: 8px 15px;"><span class="tag marker">Marker (ceiling)</span></td><td style="padding: 8px 15px;">Marker X</td><td style="padding: 8px 15px;">Marker Y</td><td style="padding: 8px 15px;">Out of face (DOWN)</td></tr>
 </table>
 </div>

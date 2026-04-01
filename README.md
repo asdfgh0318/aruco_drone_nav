@@ -49,7 +49,7 @@ Ceiling Markers ──► USB Camera ──► RPi Zero 2W ──► Flight Cont
                                    - CLAHE preprocess
                                    - ArUco detection
                                    - Position estimation
-                                   - ENU->lat/lon convert
+                                   - NED->lat/lon convert
                                    mavlink_bridge.py
                                    - GPS_INPUT (MAVLink GPS)
 ```
@@ -128,7 +128,7 @@ aruco_drone_nav/
 +-- config/
 |   +-- system_config.yaml      # Camera, ArUco, control settings
 |   +-- camera_params.yaml      # Calibrated camera intrinsics
-|   +-- marker_map.yaml         # Marker world positions (ENU)
+|   +-- marker_map.yaml         # Marker world positions (NED)
 +-- tools/                      # Development & debug tools
 |   +-- glb_viewer.html         # 3D mission viewer (standalone HTML)
 +-- viewer/samples/             # Sample mission files for viewer testing
