@@ -167,14 +167,14 @@ def create_detector(dictionary="DICT_4X4_50"):
         params = cv2.aruco.DetectorParameters()
     params.adaptiveThreshConstant = 7
     params.adaptiveThreshWinSizeMin = 3
-    params.adaptiveThreshWinSizeMax = 23
-    params.adaptiveThreshWinSizeStep = 14        # was 10 → fewer threshold passes (2 instead of 3)
+    params.adaptiveThreshWinSizeMax = 53
+    params.adaptiveThreshWinSizeStep = 14        # windows [3,17,31,45] — 4 passes, wide range for dark envs
     params.minMarkerPerimeterRate = 0.02          # was 0.01 → skip tiny false positives
     params.maxMarkerPerimeterRate = 4.0
     params.polygonalApproxAccuracyRate = 0.05
     params.minCornerDistanceRate = 0.01
     params.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_CONTOUR
-    params.minOtsuStdDev = 5.0
+    params.minOtsuStdDev = 3.0              # lowered for dark environments
     params.perspectiveRemovePixelPerCell = 4
     params.perspectiveRemoveIgnoredMarginPerCell = 0.13
     if hasattr(cv2.aruco, 'ArucoDetector'):
@@ -187,8 +187,6 @@ def create_detector(dictionary="DICT_4X4_50"):
 _last_pnp = {}  # marker_id -> (rvec, tvec)
 
 
-_last_had_detection = False  # track whether CLAHE can be skipped
-
 def _run_detect(image, detector):
     """Run ArUco detection on a grayscale or BGR image."""
     if isinstance(detector, tuple):
@@ -198,15 +196,11 @@ def _run_detect(image, detector):
 
 def detect(frame, clahe, detector, cam_matrix, dist_coeffs, marker_size, marker_sizes=None):
     """marker_size: default size. marker_sizes: dict {str(id): size_m} for per-marker override."""
-    global _last_had_detection
     t0 = time.perf_counter()
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     t1 = time.perf_counter()
-    # Conditional CLAHE: skip when previous frame had good detection
-    if _last_had_detection:
-        enhanced = gray
-    else:
-        enhanced = clahe.apply(gray)
+    # Always apply CLAHE — critical for dark/uneven lighting
+    enhanced = clahe.apply(gray)
     t2 = time.perf_counter()
 
     try:
@@ -215,15 +209,6 @@ def detect(frame, clahe, detector, cam_matrix, dist_coeffs, marker_size, marker_
         log.warning(f"Detection error: {e}")
         return [], {}
 
-    # If skipping CLAHE lost detection, retry with CLAHE
-    if ids is None and _last_had_detection:
-        enhanced = clahe.apply(gray)
-        try:
-            corners, ids, _ = _run_detect(enhanced, detector)
-        except cv2.error:
-            pass
-
-    _last_had_detection = ids is not None and len(ids) > 0
 
     t4 = time.perf_counter()
     timing = {
@@ -511,6 +496,11 @@ class PositionServer:
         ref = self
         class H(BaseHTTPRequestHandler):
             def log_message(self, *a): pass
+            def handle(self):
+                try:
+                    super().handle()
+                except BrokenPipeError:
+                    pass
             def do_GET(self):
                 if self.path in ("/", "/position"):
                     self.send_response(200)
@@ -665,14 +655,6 @@ def main():
                    "rvec_x,rvec_y,rvec_z,pos_n,pos_e,pos_d,yaw\n")
     log.info(f"Debug CSV: {csv_path}")
 
-    # Optical flow state for inter-frame interpolation
-    prev_gray = None
-    prev_features = None
-    flow_redetect_interval = 10  # re-pick features every N frames
-    fx = cam_matrix[0, 0]  # focal length in pixels (X)
-    fy = cam_matrix[1, 1]  # focal length in pixels (Y)
-    flow_count = 0
-
     log.info(f"Running Vision GPS ({args.mode} mode)")
     frames, detections_count, last_state = 0, 0, None
 
@@ -693,10 +675,6 @@ def main():
             frames += 1
             state = None
 
-            # Current grayscale for optical flow (detect() already computed it, but
-            # we need it here — cheap enough to redo: ~4ms)
-            cur_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
             if dets:
                 detections_count += 1
                 imu = mavlink.attitude if mavlink else None
@@ -714,83 +692,19 @@ def main():
                         f"{sp}\n")
                 if frames % 30 == 0:
                     csv_file.flush()
-            elif last_state is not None and prev_gray is not None and prev_features is not None:
-                # No marker detection — use optical flow to interpolate position
-                t_flow = time.perf_counter()
-                new_pts, status, _ = cv2.calcOpticalFlowPyrLK(
-                    prev_gray, cur_gray, prev_features, None,
-                    winSize=(21, 21), maxLevel=2)
-                if new_pts is not None and status is not None:
-                    good = status.flatten() == 1
-                    if np.sum(good) >= 4:
-                        old_xy = prev_features.reshape(-1, 2)[good]
-                        new_xy = new_pts.reshape(-1, 2)[good]
-                        dx_px = float(np.median(new_xy[:, 0] - old_xy[:, 0]))
-                        dy_px = float(np.median(new_xy[:, 1] - old_xy[:, 1]))
-
-                        # Subtract gyro-induced pixel shift (rotation, not translation)
-                        dt = 1.0 / max(1, cfg.get("camera", {}).get("fps", 30))
-                        rates = mavlink.attitude_rate if mavlink else None
-                        if rates:
-                            # pitchspeed rotates image in X, rollspeed in Y
-                            dx_px -= rates[1] * fx * dt  # pitch rate
-                            dy_px -= rates[0] * fy * dt  # roll rate
-
-                        # Pixel displacement → meters (h * px / focal_length)
-                        height = abs(last_state.d) if abs(last_state.d) > 0.5 else 2.5
-                        # Camera frame: cam_X = body_right (negated by R_CB), cam_Y = body_down
-                        # R_CB = [[-1,0,0],[0,1,0],[0,0,-1]] maps cam→body
-                        d_fwd = height * dx_px / fx     # cam_X pixel shift → forward (sign from R_CB)
-                        d_right = height * dy_px / fy   # cam_Y pixel shift → right
-
-                        # Rotate body displacement by yaw to NED
-                        yaw_rad = np.radians(last_state.yaw)
-                        cos_y, sin_y = np.cos(yaw_rad), np.sin(yaw_rad)
-                        dn = d_fwd * cos_y - d_right * sin_y
-                        de = d_fwd * sin_y + d_right * cos_y
-
-                        state = DroneState(
-                            n=last_state.n + dn,
-                            e=last_state.e + de,
-                            d=last_state.d,
-                            yaw=last_state.yaw,
-                            marker_ids=["flow"],
-                            confidence=last_state.confidence * 0.5,
-                            timestamp=time.time(),
-                            marker_weights={"flow": 1.0})
-                        last_state = state
-                        flow_count += 1
-                        timing["flow"] = f"{(time.perf_counter()-t_flow)*1000:.0f}"
-
-            # Update optical flow features for next frame
-            if prev_features is None or frames % flow_redetect_interval == 0:
-                # Re-pick features periodically
-                prev_features = cv2.goodFeaturesToTrack(
-                    cur_gray, maxCorners=80, qualityLevel=0.05,
-                    minDistance=15, blockSize=7)
-            elif prev_gray is not None:
-                # Track existing features to current frame
-                new_pts, status, _ = cv2.calcOpticalFlowPyrLK(
-                    prev_gray, cur_gray, prev_features, None,
-                    winSize=(21, 21), maxLevel=2)
-                if new_pts is not None and status is not None:
-                    good = status.flatten() == 1
-                    if np.sum(good) >= 4:
-                        prev_features = new_pts[good].reshape(-1, 1, 2)
-                    else:
-                        prev_features = None
-                else:
-                    prev_features = None
-            prev_gray = cur_gray
+            # Optical flow interpolation disabled — enable when needed
+            # elif last_state is not None and prev_gray is not None and prev_features is not None:
+            #     (see git history for full implementation)
 
             if args.mode == "run" and state and mavlink:
-                is_flow = not dets
+                # Map confidence to accuracy: conf=1.0→0.05m, conf=0.5→0.20m, conf=0.3→0.50m
+                hacc = max(0.05, min(1.0, 0.05 / max(state.confidence, 0.05)))
                 mavlink.send_gps_input(
                     north=state.n, east=state.e, down=state.d,
                     yaw_deg=state.yaw, origin_lat=origin_lat,
                     origin_lon=origin_lon, origin_alt=origin_alt,
                     confidence=state.confidence,
-                    horiz_accuracy=0.30 if is_flow else 0.10)
+                    horiz_accuracy=hacc)
 
             if args.mode in ("test", "run"):
                 if dets:
@@ -802,9 +716,6 @@ def main():
                     if state:
                         print(f"pos:({state.n:+.2f},{state.e:+.2f},{state.d:.2f}) "
                               f"yaw:{state.yaw:+.1f} conf:{state.confidence:.2f}", end="  ")
-                elif state and "flow" in (state.marker_ids or []):
-                    print(f"\r[FLOW] pos:({state.n:+.2f},{state.e:+.2f},{state.d:.2f}) "
-                          f"yaw:{state.yaw:+.1f} flow#{flow_count}" + " " * 20, end="")
                 else:
                     print("\rNo markers" + " " * 60, end="")
 
