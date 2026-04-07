@@ -1,95 +1,106 @@
 # ArUco Marker Map Configuration
-# Maps ArUco marker IDs to their world coordinates (ceiling positions)
-# Generated from GLB viewer on 2026-03-30
-#
-# Coordinate system (NED):
-#   X: North (positive)
-#   Y: East (positive)
-#   Z: Down (positive)
-#
-# Origin (0, 0, 0) is on the floor at the starting/takeoff position
+# Coordinate system (NED): X=North, Y=East, Z=Down
+# Origin (0,0,0) is on the floor at the starting/takeoff position
 
-# World origin definition
 origin:
   description: "Takeoff position on the floor"
   x: 0.0
   y: 0.0
   z: 0.0
 
-# Ceiling height (approximate, varies by room)
 ceiling_height: 2.0
 
-# ArUco markers (DICT_4X4_50, printed on A4 at 18cm)
-# Generate with: python tools/generate_markers.py --ids 0-17 --dictionary DICT_4X4_50 --size 18
+# ArUco markers (DICT_4X4_50, 20cm on A4, no white border)
+# L-shaped layout: IDs 0-8 going South, IDs 9-17 going West, 70cm spacing
 markers:
+  # === South corridor (N decreasing, E=0) ===
   - id: 0
-    position: [4.85, 7.14, 1.98]
-    orientation: 180
+    position: [0.00, 0.00, 2.00]
+    orientation: 0
+    size: 0.20
 
   - id: 1
-    position: [3.68, 7.09, 1.89]
-    orientation: 180
+    position: [-0.70, 0.00, 2.00]
+    orientation: 0
+    size: 0.20
 
   - id: 2
-    position: [2.56, 7.13, 1.88]
-    orientation: 180
+    position: [-1.40, 0.00, 2.00]
+    orientation: 0
+    size: 0.20
 
   - id: 3
-    position: [1.61, 7.17, 1.93]
-    orientation: 180
+    position: [-2.10, 0.00, 2.00]
+    orientation: 0
+    size: 0.20
 
   - id: 4
-    position: [0.79, 7.24, 1.93]
-    orientation: 180
+    position: [-2.80, 0.00, 2.00]
+    orientation: 0
+    size: 0.20
 
   - id: 5
-    position: [0.25, 7.28, 1.96]
-    orientation: 180
+    position: [-3.50, 0.00, 2.00]
+    orientation: 0
+    size: 0.20
 
   - id: 6
-    position: [-0.57, 7.34, 2.19]
-    orientation: 180
+    position: [-4.20, 0.00, 2.00]
+    orientation: 0
+    size: 0.20
 
   - id: 7
-    position: [-1.34, 7.43, 2.20]
-    orientation: 180
+    position: [-4.90, 0.00, 2.00]
+    orientation: 0
+    size: 0.20
 
   - id: 8
-    position: [-2.04, 7.44, 2.14]
-    orientation: 180
+    position: [-5.60, 0.00, 2.00]
+    orientation: 0
+    size: 0.20
 
+  # === West corridor (E decreasing, N=-5.60) ===
   - id: 9
-    position: [-2.10, 6.64, 2.13]
-    orientation: 180
+    position: [-5.60, -0.70, 2.00]
+    orientation: 0
+    size: 0.20
 
   - id: 10
-    position: [-2.13, 5.77, 2.13]
-    orientation: 180
+    position: [-5.60, -1.40, 2.00]
+    orientation: 0
+    size: 0.20
 
   - id: 11
-    position: [-2.18, 5.27, 2.13]
-    orientation: 180
+    position: [-5.60, -2.10, 2.00]
+    orientation: 0
+    size: 0.20
 
   - id: 12
-    position: [-2.23, 4.43, 1.73]
-    orientation: 180
+    position: [-5.60, -2.80, 2.00]
+    orientation: 0
+    size: 0.20
 
   - id: 13
-    position: [-2.31, 3.30, 1.73]
-    orientation: 180
+    position: [-5.60, -3.50, 2.00]
+    orientation: 0
+    size: 0.20
 
   - id: 14
-    position: [-2.34, 2.84, 1.81]
-    orientation: 180
+    position: [-5.60, -4.20, 2.00]
+    orientation: 0
+    size: 0.20
 
   - id: 15
-    position: [-2.39, 2.32, 1.75]
-    orientation: 180
+    position: [-5.60, -4.90, 2.00]
+    orientation: 0
+    size: 0.20
 
   - id: 16
-    position: [-2.48, 1.85, 2.18]
-    orientation: 180
+    position: [-5.60, -5.60, 2.00]
+    orientation: 0
+    size: 0.20
 
   - id: 17
-    position: [-2.40, 1.31, 1.71]
-    orientation: 180
+    position: [-5.60, -6.30, 2.00]
+    orientation: 0
+    size: 0.20

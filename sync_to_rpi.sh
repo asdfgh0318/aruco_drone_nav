@@ -3,7 +3,7 @@
 # Usage: ./sync_to_rpi.sh [--dry-run]
 
 RPI_HOST="pi.local"
-RPI_HOST_IP="192.168.213.251"  # Fallback IP
+RPI_HOST_IP="172.23.223.251"  # Fallback IP
 RPI_USER="mtj"
 RPI_PATH="/home/mtj/aruco_drone_nav"
 LOCAL_PATH="$(dirname "$(realpath "$0")")"
@@ -23,10 +23,10 @@ fi
 
 echo -e "${GREEN}Syncing to RPi at ${RPI_HOST}...${NC}"
 
-# Check connectivity (try hostname first, then IP)
-if ping -c 1 -W 2 "$RPI_HOST" &>/dev/null; then
+# Check connectivity (try hostname first, then IP; use ssh instead of ping)
+if ssh -o ConnectTimeout=3 -o BatchMode=yes "${RPI_USER}@${RPI_HOST}" true &>/dev/null; then
     TARGET_HOST="$RPI_HOST"
-elif ping -c 1 -W 2 "$RPI_HOST_IP" &>/dev/null; then
+elif ssh -o ConnectTimeout=3 -o BatchMode=yes "${RPI_USER}@${RPI_HOST_IP}" true &>/dev/null; then
     echo -e "${YELLOW}Using fallback IP ${RPI_HOST_IP}${NC}"
     TARGET_HOST="$RPI_HOST_IP"
 else

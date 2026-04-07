@@ -20,6 +20,7 @@ class MAVLinkBridge:
         self._thread = None
         self._last_heartbeat = 0.0
         self.attitude = None  # (roll, pitch, yaw) in radians
+        self.attitude_rate = None  # (rollspeed, pitchspeed, yawspeed) in rad/s
         self.fc_position = None  # (lat, lon, alt, yaw_deg) from FC EKF
 
     def connect(self, timeout=10.0):
@@ -108,6 +109,7 @@ class MAVLinkBridge:
                         self._last_heartbeat = time.time()
                     elif mtype == "ATTITUDE":
                         self.attitude = (msg.roll, msg.pitch, msg.yaw)
+                        self.attitude_rate = (msg.rollspeed, msg.pitchspeed, msg.yawspeed)
                     elif mtype == "GLOBAL_POSITION_INT":
                         self.fc_position = (
                             msg.lat / 1e7, msg.lon / 1e7,
@@ -121,7 +123,8 @@ class MAVLinkBridge:
     def is_connected(self):
         return self.conn is not None and (time.time() - self._last_heartbeat) < 3.0
 
-    def send_gps_input(self, north, east, down, yaw_deg, origin_lat, origin_lon, origin_alt, confidence=1.0):
+    def send_gps_input(self, north, east, down, yaw_deg, origin_lat, origin_lon, origin_alt,
+                       confidence=1.0, horiz_accuracy=0.1):
         """Send GPS_INPUT emulating a GPS fix from NED position relative to origin."""
         if not self.conn:
             return
@@ -154,7 +157,7 @@ class MAVLinkBridge:
             0.0,                      # ve (m/s)
             0.0,                      # vd (m/s)
             0.01,                     # speed_accuracy (m/s)
-            0.1,                      # horiz_accuracy (m)
+            horiz_accuracy,               # horiz_accuracy (m)
             0.1,                      # vert_accuracy (m)
             12,                       # satellites_visible
             yaw_cd,                   # yaw (centidegrees)
