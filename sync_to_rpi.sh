@@ -3,7 +3,7 @@
 # Usage: ./sync_to_rpi.sh [--dry-run]
 
 RPI_HOST="pi.local"
-RPI_HOST_IP="172.23.223.251"  # Fallback IP
+RPI_HOST_IP="10.18.142.251"  # Fallback IP
 RPI_USER="mtj"
 RPI_PATH="/home/mtj/aruco_drone_nav"
 LOCAL_PATH="$(dirname "$(realpath "$0")")"
