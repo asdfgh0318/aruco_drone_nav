@@ -1,5 +1,5 @@
 # ArUco Marker Map Configuration
-# Generated from GLB viewer on 2026-04-08
+# Generated from GLB viewer on 2026-04-09
 #
 # Coordinate system (NED):
 #   X: North (positive)
@@ -12,7 +12,7 @@ origin:
   y: 0.0
   z: 0.0
 
-ceiling_height: 4.2
+ceiling_height: 2.2
 
 # ArUco markers (DICT_4X4_50, printed on A4 at 18cm)
 markers:
@@ -177,6 +177,30 @@ markers:
     orientation: 0
 
   - id: 41
-    position: [1.62, -1.77, -0.85]
+    position: [0.16, 0.73, -2.28]
+    orientation: 0
+
+  - id: 42
+    position: [-0.87, 0.69, -2.89]
+    orientation: 0
+
+  - id: 43
+    position: [-1.77, 0.69, -2.61]
+    orientation: 0
+
+  - id: 44
+    position: [-3.03, -0.10, -2.88]
+    orientation: 0
+
+  - id: 45
+    position: [-2.98, -1.38, -2.88]
+    orientation: 0
+
+  - id: 46
+    position: [-4.38, -2.40, -2.61]
+    orientation: 0
+
+  - id: 47
+    position: [-5.95, -3.18, -2.92]
     orientation: 0
 
