@@ -110,7 +110,7 @@ def parse_vr_planner(data, args):
         pos = wp["position"]
         north = pos["z"]   # Unity Z = North (yaw reference axis)
         east  = pos["x"]   # Unity X = East
-        alt   = pos["y"] - start_alt  # Zero-referenced to path start position
+        alt   = pos["y"]  # Raw Unity Y — converted to MSL in build_mission if --frame global
 
         if args.fixed_alt is not None:
             alt = args.fixed_alt
@@ -176,6 +176,8 @@ def fmt_row(index, current, frame, cmd, p1, p2, p3, p4, lat, lon, alt, autocont=
 
 def build_mission(waypoints, args, start_pos=None, end_pos=None, start_alt=None):
     lines = ["QGC WPL 110"]
+    use_global = args.frame == "global"
+    frame = FRAME_GLOBAL if use_global else FRAME_GLOBAL_REL_ALT
 
     # Metadata comment — viewer and tools can parse this to reverse altitude conversion
     if start_alt is not None:
@@ -192,7 +194,7 @@ def build_mission(waypoints, args, start_pos=None, end_pos=None, start_alt=None)
     else:
         to_lat, to_lon = args.origin_lat, args.origin_lon
 
-    # Home (index 0) — set to takeoff position so mission starts there
+    # Home (index 0) — always FRAME_GLOBAL
     lines.append(fmt_row(
         0, 1, FRAME_GLOBAL, NAV_WAYPOINT,
         0, 0, 0, 0,
@@ -201,13 +203,19 @@ def build_mission(waypoints, args, start_pos=None, end_pos=None, start_alt=None)
 
     idx = 1
 
+    def to_msl(unity_y):
+        """Convert Unity Y to MSL altitude: Unity Y+ is up, so MSL = origin + Y."""
+        return args.origin_alt + unity_y
+
     # Takeoff at path start position (where drone is physically placed)
     if not args.no_takeoff:
         takeoff_alt = args.takeoff_alt if args.takeoff_alt is not None else (
             waypoints[0]["alt"] if waypoints else 1.5
         )
+        if use_global:
+            takeoff_alt = to_msl(takeoff_alt)
         lines.append(fmt_row(
-            idx, 0, FRAME_GLOBAL_REL_ALT, NAV_TAKEOFF,
+            idx, 0, frame, NAV_TAKEOFF,
             0, 0, 0, 0,
             to_lat, to_lon, takeoff_alt,
         ))
@@ -215,27 +223,27 @@ def build_mission(waypoints, args, start_pos=None, end_pos=None, start_alt=None)
 
     # Waypoints
     for wp in waypoints:
+        alt = to_msl(wp["alt"]) if use_global else wp["alt"]
         lines.append(fmt_row(
-            idx, 0, FRAME_GLOBAL_REL_ALT, wp["cmd"],
+            idx, 0, frame, wp["cmd"],
             wp["hold"], 0, 0, wp["yaw"],
-            wp["lat"], wp["lon"], wp["alt"],
+            wp["lat"], wp["lon"], alt,
         ))
         idx += 1
 
-    # Land at last waypoint position, at specified floor altitude
+    # Land at last waypoint position
     if not args.no_land:
         if waypoints:
             land_lat = waypoints[-1]["lat"]
             land_lon = waypoints[-1]["lon"]
         else:
             land_lat, land_lon = args.origin_lat, args.origin_lon
-        # Landing altitude: Unity Y of floor → relative to start_alt
-        if args.land_unity_y is not None and start_alt is not None:
-            land_alt = args.land_unity_y - start_alt
+        if args.land_unity_y is not None:
+            land_alt = to_msl(args.land_unity_y) if use_global else args.land_unity_y
         else:
-            land_alt = 0  # same floor as takeoff
+            land_alt = args.origin_alt if use_global else 0
         lines.append(fmt_row(
-            idx, 0, FRAME_GLOBAL_REL_ALT, NAV_LAND,
+            idx, 0, frame, NAV_LAND,
             0, 0, 0, 0,
             land_lat, land_lon, land_alt,
         ))
@@ -272,6 +280,8 @@ def main():
                         help="Skip TAKEOFF command")
     parser.add_argument("--no-land",         action="store_true",
                         help="Skip LAND command")
+    parser.add_argument("--frame",           choices=["relative", "global"], default="relative",
+                        help="Altitude frame: relative (to home) or global (MSL, adds origin-alt)")
     parser.add_argument("-v", "--verbose",   action="store_true",
                         help="Print each waypoint")
     args = parser.parse_args()
