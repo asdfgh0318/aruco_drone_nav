@@ -6,38 +6,35 @@
 
 **Vision-based GPS emulator for indoor drones using ceiling-mounted ArUco markers**
 
-A minimal Python system (~500 lines) for Raspberry Pi Zero 2W that detects ArUco markers on the ceiling, calculates world-frame position, and sends `GPS_INPUT` to an ArduCopter flight controller via MAVLink. The FC handles all navigation, PID control, missions, and failsafes natively — barometer handles altitude, vision handles XY position and yaw.
+A minimal Python system (~920 lines) for Raspberry Pi Zero 2W that detects ArUco markers on the ceiling, calculates world-frame position via angle-based IMU-corrected estimation, and sends `GPS_INPUT` to an ArduCopter flight controller via MAVLink2. The FC handles all navigation, PID control, missions, and failsafes natively — barometer handles altitude, vision handles XY position and yaw.
 
-![Ceiling view from RPi camera showing ArUco marker detection](docs/images/detection_live.jpg)
-*Live camera view from RPi Zero 2W - ArUco marker ID 0 on ceiling at ~1.7m distance*
+![Live 2D map showing drone tracking through marker field](docs/images/corridor_tracking.png)
+*Live map showing drone position (green), FC telemetry (orange), and detected ceiling markers during corridor traversal*
 
-## Current Performance (RPi Zero 2W)
+## Performance (RPi Zero 2W)
 
 | Metric | Value |
 |--------|-------|
 | Resolution | 1280x720 (MJPG) |
-| Detection Rate | 99-100% |
-| Processing Time | ~140ms/frame |
-| FPS | ~6 |
-| Marker Type | Multi-marker ArUco (DICT_4X4_50, up to 50) |
-| Marker Size | 18cm (A4 printable) |
-| Working Distance | 1.5-2.5m |
-| Source Code | ~500 lines (2 files) |
+| Detection Rate | 90-100% |
+| Processing Time | ~50-90ms/frame |
+| FPS | ~11-20 |
+| Markers | 47 deployed (DICT_4X4_50, 20cm, ceiling-mounted) |
+| Working Distance | 1.5-5m |
+| Source Code | ~920 lines (2 files) |
 
-### Timing Breakdown
 ```
-gray:3ms  CLAHE:20ms  bgr:2ms  detect:110ms  total:135ms
+gray:4ms  clahe:30ms  detect:47ms  total:~80ms  age:20ms
 ```
 
-### Sample JSON Output (HTTP stream mode)
+### Sample JSON Output
 ```json
 {
-  "x": 0.549, "y": -0.289, "z": 1.712,
+  "n": 0.549, "e": -0.289, "d": 1.712,
   "yaw": 159.2, "marker_ids": ["0", "1"], "confidence": 0.85,
   "marker_weights": {"0": 0.62, "1": 0.38},
   "detection_rate": 1.0, "uptime": 10.4,
-  "timing": {"gray": "5", "clahe": "21", "detect": "107", "total": "134"},
-  "fc": {"x": 0.53, "y": -0.31, "z": 1.7, "yaw": 160.2}
+  "timing": {"gray": "4", "clahe": "30", "detect": "47", "total": "81", "age": "20"}
 }
 ```
 
@@ -47,139 +44,88 @@ gray:3ms  CLAHE:20ms  bgr:2ms  detect:110ms  total:135ms
 Ceiling Markers ──► USB Camera ──► RPi Zero 2W ──► Flight Controller
                     (MJPG 720p)    vision_gps.py    ArduCopter EKF
                                    - CLAHE preprocess
-                                   - ArUco detection
-                                   - Position estimation
-                                   - NED->lat/lon convert
+                                   - ArUco detection (grayscale)
+                                   - solvePnPGeneric (IPPE disambig)
+                                   - Angle-based + IMU position
+                                   - Multi-marker weighted fusion
                                    mavlink_bridge.py
-                                   - GPS_INPUT (MAVLink GPS)
+                                   - GPS_INPUT (MAVLink2)
+                                   - Dynamic horiz_accuracy
 ```
 
-## Hardware Requirements
+## Hardware
 
-- **Drone**: ArduCopter-compatible flight controller (Pixhawk, etc.)
-- **Companion Computer**: Raspberry Pi Zero 2W
-- **Camera**: USB camera (facing upward toward ceiling), MJPG capable
-- **Markers**: Printed ArUco markers (18cm, DICT_4X4_50) on A4 paper
-- **Connection**: UART serial between RPi and flight controller
+- **Drone**: SpeedyBee F405 V3 (custom firmware with `AP_GPS_MAV_ENABLED=1`)
+- **Companion Computer**: Raspberry Pi Zero 2W, NixOS arm64
+- **Camera**: USB camera (upward-facing), MJPG 1280×720, focus locked at infinity
+- **Markers**: 20cm ArUco (DICT_4X4_50) on A4 paper, ceiling-mounted
+- **Connection**: UART serial at 115200 baud
 
 ## Quick Start
 
-### 1. Setup
 ```bash
 git clone https://github.com/asdfgh0318/aruco_drone_nav.git
 cd aruco_drone_nav
 pip install -r requirements.txt
 
-# Generate and print ArUco markers (18cm for A4)
-python3 tools/generate_markers.py --ids 0,1,2,3 --size 180 -o markers/
-```
+# Generate markers
+python3 tools/generate_markers.py --ids 0-19 --size 200 -o markers/
 
-### 2. Deploy to RPi
-```bash
+# Deploy to RPi
 ./sync_to_rpi.sh
-ssh aruconav@aruconav.local
-cd /home/aruconav/aruco_drone_nav
+
+# Run on RPi
+sudo python3 -m src --mode run     # Flight mode
+sudo python3 -m src --mode test    # Console debug
 ```
 
-### 3. Run
-```bash
-# Test mode - prints position to console
-python3 -m src --mode test
+## Tools
 
-# Stream mode - HTTP server for remote monitoring
-python3 -m src --mode stream --port 8001
+| Tool | Purpose |
+|------|---------|
+| `tools/live_map.html` | Browser 2D live map with marker weights, FC arrow, YAML import, camera config |
+| `tools/glb_viewer.html` | Browser 3D viewer for building models + flight paths + marker placement |
+| `tools/debug_viewer.py` | Remote frame capture with timing overlay |
+| `tools/vr_to_waypoints.py` | VR planner JSON → ArduPilot `.waypoints` |
+| `tools/generate_markers.py` | Generate printable ArUco marker PDFs |
+| `tools/calibrate_camera.py` | Interactive chessboard camera calibration |
+| `tools/calibrate_level.py` | Camera tilt calibration |
 
-# Run mode - sends position to flight controller via MAVLink
-python3 -m src --mode run
-```
-
-### 4. Monitor (from local machine)
-```bash
-# Check position via HTTP
-curl http://aruconav.local:8001/position
-
-# Debug viewer with live frames
-python3 tools/debug_viewer.py --host aruconav.local --port 8001
-```
-
-## 3D Mission Viewer & Marker Placement
-
-Browser-based tool for visualizing GLB building models with flight paths, ArduPilot missions, and ArUco marker placement.
-
-```bash
-# Open directly (static, no server needed)
-xdg-open tools/glb_viewer.html
-```
-
-Load **GLB** models, **JSON** VR planner missions, and **.waypoints** ArduPilot files. Drag & drop supported.
-
-**Marker Placement Mode** (`M` key): Click on the ceiling in the 3D model to place ArUco markers. Each marker shows as a purple square with an orange orientation arrow and a vertical drop line. Import/export `marker_map.yaml` directly. Per-marker ceiling height from click point, with optional fixed override.
-
-An interactive tutorial (`?` button) walks through all features on first visit.
-
-## Project Structure
+## FC Parameters
 
 ```
-aruco_drone_nav/
-+-- src/                        # Core system (~490 lines)
-|   +-- vision_gps.py           # Camera, detection, position, HTTP server, main loop
-|   +-- mavlink_bridge.py       # MAVLink: connect, send position, set EKF origin
-|   +-- __main__.py             # Entry point (python3 -m src)
-+-- config/
-|   +-- system_config.yaml      # Camera, ArUco, control settings
-|   +-- camera_params.yaml      # Calibrated camera intrinsics
-|   +-- marker_map.yaml         # Marker world positions (NED)
-+-- tools/                      # Development & debug tools
-|   +-- glb_viewer.html         # 3D mission viewer (standalone HTML)
-+-- viewer/samples/             # Sample mission files for viewer testing
-+-- docs/                       # Documentation + images
-+-- markers/                    # Generated marker PDFs
-```
-
-## Detection Pipeline
-
-1. **Frame Capture** - Threaded USB camera capture (MJPG 720p, buffer=1)
-2. **CLAHE** - Adaptive histogram equalization (clipLimit=2.5, 8x8 tiles)
-3. **ArUco Detection** - `detectMarkers()` with tuned params for ceiling distance
-4. **Pose Estimation** - `solvePnP()` per marker for 6-DOF pose
-5. **Position Calculation** - Angle-based: tvec angles + IMU pitch/roll + level calibration → world position
-6. **MAVLink Output** - `GPS_INPUT` with lat/lon/alt/yaw (hdop=0.3, 0.1m accuracy)
-
-## FC Configuration (ArduCopter)
-
-```
-AHRS_EKF_TYPE = 3      # Use EKF3
 GPS_TYPE = 14           # MAVLink GPS
-EK3_SRC1_POSXY = 3     # GPS for XY position
-EK3_SRC1_POSZ = 1      # Baro for altitude (reliable indoors)
-EK3_SRC1_YAW = 2       # GPS yaw (or 0 for None)
-VISO_TYPE = 0           # Disabled
+EK3_SRC1_POSXY = 3      # GPS for XY
+EK3_SRC1_POSZ = 1       # Baro for Z
+SERIAL4_BAUD = 115       # 115200
 ```
 
-See [docs/FC_CONFIG.md](docs/FC_CONFIG.md) for full parameter list and tuning guide.
-
-## HTTP API (Stream Mode)
+## HTTP API (port 8001)
 
 | Endpoint | Response |
 |----------|----------|
-| `GET /position` | JSON with x, y, z, yaw, confidence, marker_weights, fc position, timing |
-| `GET /markers` | JSON array of marker positions from marker_map.yaml |
-| `GET /debug-frame` | JPEG image from camera |
+| `GET /position` | JSON: position, yaw, markers, confidence, timing, IMU |
+| `GET /markers` | JSON: marker map from YAML |
+| `GET /debug-frame` | JPEG: latest camera frame |
+| `GET /camera-config` | JSON: camera controls |
+| `POST /camera-config` | Update camera settings live |
 
 ## Documentation
 
-- **[WIRING.md](docs/WIRING.md)** - RPi + SpeedyBee F405 V3 wiring guide
-- **[FC_CONFIG.md](docs/FC_CONFIG.md)** - Flight controller configuration
-- **[TECHNICAL.md](docs/TECHNICAL.md)** - Algorithms, coordinate frames, timing
-- **[TESTING.md](docs/TESTING.md)** - Testing procedures
-- **[CURRENT_PLAN.md](CURRENT_PLAN.md)** - Project status and roadmap
+**[docs/site.html](docs/site.html)** — Comprehensive documentation site (open in browser)
 
-## Known Issues
+See also: [CLAUDE.md](CLAUDE.md) for architecture details, [docs/GLB_VIEWER.md](docs/GLB_VIEWER.md) for 3D viewer guide.
 
-- **OpenCV CORNER_REFINE_CONTOUR crash**: Rare assertion error, handled by skipping bad frames
-- **Single-threaded detection**: ArUco detect takes ~110ms, limiting FPS to ~6
-- **solvePnP divergence**: ITERATIVE solver can diverge with bad initial guess — sanity check discards results >10m
-- **18cm markers**: Smaller than A3 originals, ~67px at 3m ceiling — adequate but less margin at frame edges
+## Gallery
+
+| | |
+|---|---|
+| ![Development workspace](docs/images/dev_workspace.png) | ![Vision vs FC position](docs/images/vision_vs_fc.png) |
+| *Full development workspace* | *Vision (green) vs FC (orange) position* |
+| ![3D GLB viewer](docs/images/glb_viewer_3d.png) | ![Camera view](docs/images/detection_live.jpg) |
+| *3D building model with markers and flight path* | *Camera view of ceiling markers* |
+
+<!-- TODO: Add flight video, hover test results -->
 
 ## License
 
@@ -192,4 +138,4 @@ Proprietary - Warsaw University of Technology
 
 ---
 
-*Last updated: 2026-03-30*
+*Last updated: 2026-04-13*

@@ -1,36 +1,25 @@
 # ArUco Vision GPS - System Configuration
-# RPi detects ArUco markers and sends position to FC via MAVLink.
+# RPi detects ArUco markers and sends GPS_INPUT to FC via MAVLink.
 # FC handles all navigation, PID, missions, and failsafes.
 
 serial:
-  port: "/dev/ttyS0"            # RPi UART port (/dev/ttyS0 on NixOS, /dev/serial0 on Raspbian)
+  port: "/dev/ttyS0"            # RPi UART port (NixOS)
   baud: 115200                   # MAVLink baud rate
 
 camera:
   device_id: 0                   # USB camera device ID
-  width: 1280                    # 720p with scaled calibration
+  width: 1280                    # 720p MJPG
   height: 720
-  fps: 30                        # Target FPS
-  # exposure_time_us: 5000       # Uncomment for low exposure (reduces motion blur, needs good light)
+  fps: 30                        # Camera FPS (detection is the bottleneck, not camera)
 
 aruco:
   dictionary: "DICT_4X4_50"      # ArUco dictionary (4X4 for better detection at distance)
-  marker_size_m: 0.18            # Physical marker size in meters (18cm for A4 with margins)
-
-control:
-  loop_rate_hz: 20               # Vision position update rate (Hz)
+  marker_size_m: 0.20            # Default marker size in meters (per-marker override in marker_map.yaml)
 
 vision_server:
-  port: 8001                     # HTTP server port for stream mode
-
-gps_emulation: true                # true = send GPS_INPUT (works on any firmware, baro handles Z)
-                                   # false = send VISION_POSITION_ESTIMATE (needs VISO params)
+  port: 8001                     # HTTP server port
 
 ekf_origin:
   lat: 52.2297                   # Latitude for GPS origin (Warsaw)
   lon: 21.0122                   # Longitude for GPS origin
-  alt: 100.0                     # Altitude (meters above sea level)
-
-logging:
-  level: "INFO"                  # DEBUG, INFO, WARNING, ERROR
-  file: "flight_log.txt"         # Log file name
+  alt: 100.0                     # Altitude (meters above sea level, arbitrary for indoor)

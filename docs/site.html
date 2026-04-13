@@ -158,6 +158,7 @@ pre code { background: none; padding: 0; color: #e2e8f0; font-size: 13px; }
     </li>
     <li><a href="#config">Config Reference</a></li>
     <li><a href="#troubleshooting">Troubleshooting</a></li>
+    <li><a href="#gallery">Gallery</a></li>
   </ul>
 </nav>
 
@@ -168,10 +169,13 @@ pre code { background: none; padding: 0; color: #e2e8f0; font-size: 13px; }
 <h1>ArUco Vision GPS</h1>
 <p>Vision-based GPS emulator for indoor drones using ceiling-mounted ArUco markers</p>
 
-<p>A minimal Python system (~700 lines) for Raspberry Pi Zero 2W that detects ArUco markers on the ceiling, calculates world-frame position using angle-based estimation with IMU correction, and sends <code>GPS_INPUT</code> to an ArduCopter flight controller via MAVLink2. The FC handles all navigation, PID control, missions, and failsafes natively.</p>
+<p>A minimal Python system (~920 lines) for Raspberry Pi Zero 2W that detects ArUco markers on the ceiling, calculates world-frame position using angle-based estimation with IMU correction, and sends <code>GPS_INPUT</code> to an ArduCopter flight controller via MAVLink2. The FC handles all navigation, PID control, missions, and failsafes natively.</p>
+
+<img src="images/corridor_tracking.png" alt="Live map during corridor tracking" style="width:100%;border-radius:8px;margin:16px 0;border:1px solid var(--border)">
+<p style="font-size:12px;color:var(--text2);text-align:center;margin-top:-8px">Live map showing drone tracking through corridor with 30+ ceiling markers</p>
 
 <pre class="diagram"><code>
-  Ceiling Markers (18cm, DICT_4X4_50)
+  Ceiling Markers (20cm, DICT_4X4_50)
          |
     USB Camera (MJPG 1280x720)
          |
@@ -197,15 +201,15 @@ pre code { background: none; padding: 0; color: #e2e8f0; font-size: 13px; }
 <tr><th>Metric</th><th>Value</th></tr>
 <tr><td>Resolution</td><td>1280x720 (MJPG)</td></tr>
 <tr><td>Detection Rate</td><td>80-100% (corridor), 99% (bench)</td></tr>
-<tr><td>Processing Time</td><td>~140ms/frame</td></tr>
-<tr><td>FPS</td><td>~6-7</td></tr>
-<tr><td>Markers</td><td>DICT_4X4_50, 18cm on A4, up to 50 supported</td></tr>
-<tr><td>Working Distance</td><td>1.5-3.0m (ceiling height)</td></tr>
-<tr><td>Source Code</td><td>~700 lines across 2 files</td></tr>
+<tr><td>Processing Time</td><td>~50-90ms/frame</td></tr>
+<tr><td>FPS</td><td>~11-20</td></tr>
+<tr><td>Markers</td><td>DICT_4X4_50, 20cm on A4, 47 deployed</td></tr>
+<tr><td>Working Distance</td><td>1.5-5.0m (ceiling height)</td></tr>
+<tr><td>Source Code</td><td>~920 lines across 2 files</td></tr>
 </table>
 
 <h3>Timing Breakdown</h3>
-<pre><code>gray: 3ms | CLAHE: 20ms | bgr: 2ms | detect: 110ms | total: ~140ms</code></pre>
+<pre><code>gray: 4ms | CLAHE: 30ms | detect: 47ms | total: ~80ms | age: 20ms</code></pre>
 </section>
 
 <!-- ============================================================ -->
@@ -216,7 +220,7 @@ pre code { background: none; padding: 0; color: #e2e8f0; font-size: 13px; }
 <ul>
   <li><b>OS:</b> NixOS arm64 (kernel 6.6.74)</li>
   <li><b>User:</b> <code>mtj</code>, hostname <code>pi.local</code></li>
-  <li><b>IP:</b> <code>192.168.213.251</code></li>
+  <li><b>IP:</b> Changes per network — check <code>sync_to_rpi.sh</code> for current fallback IP</li>
   <li><b>Python:</b> 3.12.8, OpenCV 4.9.0, numpy 1.26.4</li>
   <li><b>UART:</b> <code>/dev/ttyS0</code> at 115200 baud</li>
   <li><b>Dependencies:</b> Installed via Nix (not pip)</li>
@@ -241,10 +245,10 @@ pre code { background: none; padding: 0; color: #e2e8f0; font-size: 13px; }
 
 <h3>Markers</h3>
 <ul>
-  <li>ArUco DICT_4X4_50, 18cm printed on A4 paper</li>
+  <li>ArUco DICT_4X4_50, 20cm printed on A4 paper</li>
   <li>Ceiling-mounted, facing straight down</li>
-  <li>Currently 18 markers deployed (IDs 0-17)</li>
-  <li>Generate with: <code>python3 tools/generate_markers.py --ids 0-49 --dictionary DICT_4X4_50 --size 18</code></li>
+  <li>Currently 47 markers deployed (IDs 0-47, with gaps)</li>
+  <li>Generate with: <code>python3 tools/generate_markers.py --ids 0-49 --dictionary DICT_4X4_50 --size 200</code></li>
 </ul>
 
 <h3>Wiring</h3>
@@ -307,7 +311,6 @@ SERIALx_BAUD     = <span class="num">115</span>  <span class="cmt"># 115200 baud
   <li>Result is saved to <code>config/camera_params.yaml</code> with camera matrix, distortion coefficients, and reprojection error.</li>
 </ol>
 
-<div class="tip"><b>Remote calibration:</b> If calibrating on the RPi remotely, run <code>camera_server.py</code> on the RPi, then use <code>calibrate_remote.py</code> on your laptop to capture frames over the network.</div>
 
 <h3 id="setup-level-cal">Level Calibration (Camera-to-Drone)</h3>
 <p>Corrects for the physical tilt of the camera relative to the drone body. This is critical for accurate position estimation.</p>
@@ -428,7 +431,7 @@ Corner 3 (bottom-left) -- Corner 2 (bottom-right)</code></pre>
   <li><code>marker_map.yaml</code> has all deployed marker positions</li>
   <li>Markers physically mounted on ceiling, good lighting, no occlusions</li>
   <li>RPi powered, connected to WiFi, UART connected to FC</li>
-  <li><code>system_config.yaml</code>: <code>gps_emulation: true</code>, correct serial port</li>
+  <li><code>system_config.yaml</code>: correct serial port and baud rate</li>
   <li>Camera focus locked (automatic on startup)</li>
 </ul>
 
@@ -442,7 +445,7 @@ Corner 3 (bottom-left) -- Corner 2 (bottom-right)</code></pre>
 <p>All modes start the HTTP server on port 8001 for remote monitoring.</p>
 <pre><code><span class="cmt"># Deploy and run</span>
 ./sync_to_rpi.sh
-ssh mtj@192.168.213.251
+ssh mtj@pi.local   <span class="cmt"># or use IP from sync_to_rpi.sh</span>
 cd /home/mtj/aruco_drone_nav
 sudo python3 -m src --mode run</code></pre>
 
@@ -485,49 +488,48 @@ sudo python3 -m src --mode run</code></pre>
 <tr><th>Tool</th><th>Description</th><th>Usage</th></tr>
 <tr><td><code>calibrate_camera.py</code></td><td>Camera intrinsics via chessboard</td><td><code>python3 tools/calibrate_camera.py --camera 0 --res-w 1280 --res-h 720</code></td></tr>
 <tr><td><code>calibrate_level.py</code></td><td>Camera mount tilt calibration</td><td><code>python3 tools/calibrate_level.py --samples 30</code></td></tr>
-<tr><td><code>calibrate_remote.py</code></td><td>Remote ChArUco calibration over network</td><td><code>python3 tools/calibrate_remote.py --host pi.local</code></td></tr>
-<tr><td><code>camera_server.py</code></td><td>MJPEG server for RPi (used by remote cal)</td><td><code>python3 tools/camera_server.py --port 8000</code></td></tr>
 </table>
+
+<img src="images/camera_calibration.png" alt="Camera calibration tool" style="width:100%;border-radius:8px;margin:16px 0;border:1px solid var(--border)">
+<p style="font-size:12px;color:var(--text2);text-align:center;margin-top:-8px">Camera calibration tool waiting for chessboard frames</p>
 
 <h3>Marker Generators</h3>
 <table>
 <tr><th>Tool</th><th>Description</th><th>Usage</th></tr>
-<tr><td><code>generate_markers.py</code></td><td>ArUco marker PNG/PDF generator</td><td><code>python3 tools/generate_markers.py --ids 0-49 --size 18</code></td></tr>
+<tr><td><code>generate_markers.py</code></td><td>ArUco marker PNG/PDF generator</td><td><code>python3 tools/generate_markers.py --ids 0-49 --size 200</code></td></tr>
 <tr><td><code>generate_chessboard.py</code></td><td>Chessboard calibration pattern</td><td><code>python3 tools/generate_chessboard.py</code></td></tr>
-<tr><td><code>generate_charuco.py</code></td><td>ChArUco board generator</td><td><code>python3 tools/generate_charuco.py --id 0</code></td></tr>
-<tr><td><code>generate_diamonds.py</code></td><td>ArUco diamond marker generator</td><td><code>python3 tools/generate_diamonds.py --ids "0_1_2_3"</code></td></tr>
 </table>
 
 <h3>Debug &amp; Visualization</h3>
 <table>
 <tr><th>Tool</th><th>Description</th><th>Usage</th></tr>
-<tr><td><code>live_map.html</code></td><td>Browser live map: markers, weights, FC arrow, SNAP, CAM</td><td>Open in browser, connect to RPi</td></tr>
-<tr><td><code>glb_viewer.html</code></td><td>3D GLB viewer + marker placement (M key)</td><td>Open in browser, load GLB</td></tr>
+<tr><td><code>live_map.html</code></td><td>Browser live 2D map: markers, weights, FC arrow, SNAP, CAM config</td><td>Open in browser, connect to RPi</td></tr>
+<tr><td><code>glb_viewer.html</code></td><td>3D GLB viewer + marker placement (M key) + flight path</td><td>Open in browser, load GLB</td></tr>
 <tr><td><code>debug_viewer.py</code></td><td>Manual frame capture with overlay</td><td><code>python3 tools/debug_viewer.py --host pi.local</code></td></tr>
 <tr><td><code>terminal_map.py</code></td><td>Curses ASCII position map (SSH-friendly)</td><td><code>python3 tools/terminal_map.py --host pi.local</code></td></tr>
-<tr><td><code>position_viewer.py</code></td><td>OpenCV top-down position map</td><td><code>python3 tools/position_viewer.py --host pi.local</code></td></tr>
-<tr><td><code>debug_gui.py</code></td><td>Full Tkinter debug GUI with recording</td><td><code>python3 tools/debug_gui.py --host pi.local</code></td></tr>
-<tr><td><code>debug_ceiling.py</code></td><td>Ceiling diamond detection debug</td><td><code>python3 tools/debug_ceiling.py --host pi.local</code></td></tr>
-<tr><td><code>configurator_gui.py</code></td><td>Tkinter launcher for all tools</td><td><code>python3 tools/configurator_gui.py</code></td></tr>
+<tr><td><code>orientation_check.py</code></td><td>Interactive NED axis / marker orientation verification</td><td><code>python3 tools/orientation_check.py</code></td></tr>
 </table>
+
+<div style="display:flex;gap:12px;margin:16px 0">
+<div style="flex:1"><img src="images/live_map_full.png" alt="Live map" style="width:100%;border-radius:8px;border:1px solid var(--border)">
+<p style="font-size:11px;color:var(--text2);text-align:center">Live 2D map with 30+ markers</p></div>
+<div style="flex:1"><img src="images/glb_viewer_3d.png" alt="GLB viewer" style="width:100%;border-radius:8px;border:1px solid var(--border)">
+<p style="font-size:11px;color:var(--text2);text-align:center">3D GLB viewer with markers and flight path</p></div>
+</div>
 
 <h3>Testing</h3>
 <table>
 <tr><th>Tool</th><th>Description</th><th>Usage</th></tr>
 <tr><td><code>test_gps_input.py</code></td><td>Send synthetic GPS_INPUT to verify FC fix</td><td><code>python3 tools/test_gps_input.py</code></td></tr>
-<tr><td><code>test_aruco_detection.py</code></td><td>Live ArUco detection with pose overlay</td><td><code>python3 tools/test_aruco_detection.py --camera 0</code></td></tr>
 <tr><td><code>test_local_detection.py</code></td><td>Test detection on a saved image file</td><td><code>python3 tools/test_local_detection.py image.jpg</code></td></tr>
-<tr><td><code>test_mavlink.py</code></td><td>Interactive MAVLink telemetry + mode control</td><td><code>python3 tools/test_mavlink.py --port /dev/ttyS0</code></td></tr>
-<tr><td><code>test_sitl.py</code></td><td>Full SITL pipeline validation</td><td><code>python3 tools/test_sitl.py -v --skip-params</code></td></tr>
-<tr><td><code>bench_test.py</code></td><td>Detection + position benchmark (no FC)</td><td><code>python3 tools/bench_test.py</code></td></tr>
+<tr><td><code>mavlink_debug.py</code></td><td>Raw MAVLink serial diagnostic</td><td><code>python3 tools/mavlink_debug.py --port /dev/ttyS0</code></td></tr>
 </table>
 
 <h3>Mission Converters</h3>
 <table>
 <tr><th>Tool</th><th>Description</th><th>Usage</th></tr>
-<tr><td><code>vr_to_waypoints.py</code></td><td>VR planner JSON to ArduPilot .waypoints</td><td><code>python3 tools/vr_to_waypoints.py path.json</code></td></tr>
+<tr><td><code>vr_to_waypoints.py</code></td><td>VR planner JSON to ArduPilot .waypoints</td><td><code>python3 tools/vr_to_waypoints.py path.json --frame global</code></td></tr>
 <tr><td><code>tlog_to_vr_json.py</code></td><td>Mission Planner .tlog to VR JSON</td><td><code>python3 tools/tlog_to_vr_json.py flight.tlog</code></td></tr>
-<tr><td><code>marker_spacing.py</code></td><td>Calculate optimal marker spacing for room</td><td><code>python3 tools/marker_spacing.py --altitude 2.0</code></td></tr>
 </table>
 </section>
 
@@ -547,7 +549,7 @@ sudo python3 -m src --mode run</code></pre>
 
 <h3>Sample /position Response</h3>
 <pre><code>{
-  <span class="str">"x"</span>: <span class="num">0.549</span>, <span class="str">"y"</span>: <span class="num">-0.289</span>, <span class="str">"z"</span>: <span class="num">1.712</span>,
+  <span class="str">"n"</span>: <span class="num">0.549</span>, <span class="str">"e"</span>: <span class="num">-0.289</span>, <span class="str">"d"</span>: <span class="num">1.712</span>,
   <span class="str">"yaw"</span>: <span class="num">159.2</span>,
   <span class="str">"marker_ids"</span>: [<span class="str">"0"</span>, <span class="str">"1"</span>],
   <span class="str">"confidence"</span>: <span class="num">0.85</span>,
@@ -556,8 +558,8 @@ sudo python3 -m src --mode run</code></pre>
   <span class="str">"uptime"</span>: <span class="num">42.1</span>,
   <span class="str">"imu_roll"</span>: <span class="num">-2.1</span>, <span class="str">"imu_pitch"</span>: <span class="num">1.4</span>,
   <span class="str">"cam_pitch"</span>: <span class="num">3.2</span>, <span class="str">"cam_roll"</span>: <span class="num">-1.8</span>,
-  <span class="str">"fc"</span>: {<span class="str">"x"</span>: <span class="num">0.53</span>, <span class="str">"y"</span>: <span class="num">-0.31</span>, <span class="str">"z"</span>: <span class="num">1.7</span>, <span class="str">"yaw"</span>: <span class="num">160.2</span>},
-  <span class="str">"timing"</span>: {<span class="str">"gray"</span>: <span class="str">"3"</span>, <span class="str">"clahe"</span>: <span class="str">"20"</span>, <span class="str">"detect"</span>: <span class="str">"107"</span>, <span class="str">"total"</span>: <span class="str">"134"</span>}
+  <span class="str">"fc"</span>: {<span class="str">"lat"</span>: <span class="num">52.2297</span>, <span class="str">"lon"</span>: <span class="num">21.0122</span>, <span class="str">"alt"</span>: <span class="num">1.7</span>, <span class="str">"yaw"</span>: <span class="num">160.2</span>},
+  <span class="str">"timing"</span>: {<span class="str">"gray"</span>: <span class="str">"4"</span>, <span class="str">"clahe"</span>: <span class="str">"30"</span>, <span class="str">"detect"</span>: <span class="str">"47"</span>, <span class="str">"total"</span>: <span class="str">"81"</span>, <span class="str">"age"</span>: <span class="str">"20"</span>}
 }</code></pre>
 
 <h3>Camera Config POST</h3>
@@ -572,14 +574,15 @@ sudo python3 -m src --mode run</code></pre>
 
 <h3 id="tech-pipeline">Detection Pipeline</h3>
 <pre class="diagram"><code>
-  Frame (1280x720 MJPG)
-    --> Grayscale (3ms)
-    --> CLAHE (clipLimit=2.5, 8x8 tiles) (20ms)
-    --> BGR conversion (2ms)
-    --> ArUco detectMarkers (~110ms)
+  Frame (1280x720 MJPG, V4L2 buffer=1)
+    --> Grayscale (4ms)
+    --> CLAHE (clipLimit=2.5, 8x8 tiles) (30ms)
+    --> ArUco detectMarkers on grayscale (~47ms)
+        adaptiveThresh windows: [3, 17, 31, 45]
+        minOtsuStdDev: 3.0 (dark environment support)
     --> solvePnPGeneric per marker (IPPE_SQUARE)
     --> Disambiguate: pick solution with most vertical marker Z
-    --> Per-marker Detection result (tvec, rvec, distance, centroid)
+    --> Per-marker Detection result (tvec, rvec, centroid)
 </code></pre>
 
 <p>OpenCV API compatibility: the code handles both the old API (<code>DetectorParameters_create()</code> + <code>cv2.aruco.detectMarkers()</code>) and the new API (<code>ArucoDetector</code> class). Detected at runtime via <code>hasattr</code>.</p>
@@ -601,7 +604,7 @@ body_fwd   = -height * tan(world_ax) <span class="cmt"># cam_X = -body_forward</
 body_right =  height * tan(world_ay) <span class="cmt"># cam_Y = body_right</span>
 
 <span class="cmt"># Rotate by yaw to NED world frame</span>
-pos = marker_pos + yaw_rotation @ [body_fwd, body_right, body_down]
+pos = marker_pos - yaw_rotation @ [body_fwd, body_right, body_down]
 
 <span class="cmt"># Yaw from vision (in-plane rotation is reliable)</span>
 R_bw = R_mw @ R_cm.T @ R_CB_NOMINAL.T
@@ -609,12 +612,13 @@ yaw  = atan2(R_bw[1,0], R_bw[0,0])</code></pre>
 
 <div class="note"><b>Why not R_cm for position?</b> At near-perpendicular viewing angles (camera looking straight up), IPPE_SQUARE returns two pose solutions. Their tvecs are similar but their rotation matrices are mirrored. The disambiguation check (marker Z verticality) picks the right solution for tvec, but R_cm remains unreliable for lateral position extraction. The angle-based approach avoids R_cm entirely for XY.</div>
 
-<div class="note"><b>R_CB_NOMINAL has det=-1</b> — it's a reflection matrix <code>[[-1,0,0],[0,1,0],[0,0,1]]</code> from the upward-facing camera. Cannot be used in standard rotation chains for IMU correction. The angle-based approach sidesteps this.</div>
+<div class="note"><b>R_CB_NOMINAL</b> is <code>[[-1,0,0],[0,1,0],[0,0,-1]]</code> (det=+1, proper rotation — 180° around Y axis). Maps camera frame to body frame for the upward-facing camera. Used for yaw extraction and body-frame tvec display, but position estimation uses the angle-based approach directly.</div>
 
 <h3 id="tech-fusion">Multi-Marker Fusion</h3>
 <p>When multiple markers are detected, positions are fused using inverse-distance weighting:</p>
-<pre><code><span class="cmt"># Weight: closer markers are more reliable</span>
-w = <span class="num">1.0</span> / (distance + <span class="num">0.1</span>)
+<pre><code><span class="cmt"># Weight: closer markers horizontally are more reliable</span>
+horiz_dist = sqrt(tvec_x² + tvec_y²)
+w = <span class="num">1.0</span> / (horiz_dist + <span class="num">0.1</span>)
 
 <span class="cmt"># Weighted average position</span>
 pos = sum(pos_i * w_i) / sum(w_i)
@@ -625,8 +629,8 @@ yaw = atan2(sum(sin(yaw_i) * w_i), sum(cos(yaw_i) * w_i))
 <span class="cmt"># Confidence: scales with marker count, drops if estimates disagree</span>
 conf = min(<span class="num">1.0</span>, N / <span class="num">3.0</span>) * exp(-std_of_positions)
 
-<span class="cmt"># Low-pass filter (alpha=0.3) with yaw wrap handling</span>
-pos = <span class="num">0.3</span> * new_pos + <span class="num">0.7</span> * prev_pos</code></pre>
+<span class="cmt"># Dynamic GPS accuracy sent to FC (higher confidence = tighter accuracy)</span>
+horiz_accuracy = <span class="num">0.05</span> / max(confidence, <span class="num">0.05</span>)  <span class="cmt"># 0.05m–1.0m range</span></code></pre>
 
 <h3 id="tech-mavlink">MAVLink2 GPS_INPUT</h3>
 <p><b>Critical:</b> The connection must use <code>mavlink20=True</code>. The <code>yaw</code> field in GPS_INPUT is a MAVLink2 extension field — without MAVLink2, it is silently truncated and the FC never receives heading data.</p>
@@ -641,7 +645,7 @@ yaw_cd    = ((yaw_deg % <span class="num">360</span>) + <span class="num">360</s
 fix_type  = <span class="num">3</span>       <span class="cmt"># 3D fix</span>
 satellites= <span class="num">12</span>
 hdop      = <span class="num">0.3</span>     <span class="cmt"># high confidence</span>
-horiz_acc = <span class="num">0.1</span>     <span class="cmt"># 10cm horizontal accuracy</span></code></pre>
+horiz_acc = <span class="num">0.05</span>-<span class="num">1.0</span> <span class="cmt"># scales with detection confidence</span></code></pre>
 
 <p><b>Heartbeat requirement:</b> ArduPilot does NOT stream telemetry on non-primary UARTs until it receives heartbeats from the companion computer. The bridge sends 5 heartbeats before <code>wait_heartbeat()</code> and continues at 1 Hz in the receive loop.</p>
 
@@ -680,7 +684,7 @@ scene_x = -unity_x, scene_y = unity_y, scene_z = unity_z</code></pre>
 
 <h3>system_config.yaml</h3>
 <pre><code><span class="kw">serial</span>:
-  <span class="kw">port</span>: <span class="str">"/dev/ttyS0"</span>    <span class="cmt"># NixOS UART (Raspbian: /dev/serial0)</span>
+  <span class="kw">port</span>: <span class="str">"/dev/ttyS0"</span>    <span class="cmt"># NixOS UART</span>
   <span class="kw">baud</span>: <span class="num">115200</span>
 
 <span class="kw">camera</span>:
@@ -688,27 +692,18 @@ scene_x = -unity_x, scene_y = unity_y, scene_z = unity_z</code></pre>
   <span class="kw">width</span>: <span class="num">1280</span>
   <span class="kw">height</span>: <span class="num">720</span>
   <span class="kw">fps</span>: <span class="num">30</span>
-  <span class="cmt"># exposure_time_us: 10000  # uncomment for manual exposure</span>
 
 <span class="kw">aruco</span>:
   <span class="kw">dictionary</span>: <span class="str">"DICT_4X4_50"</span>
-  <span class="kw">marker_size_m</span>: <span class="num">0.18</span>    <span class="cmt"># 18cm physical size</span>
-
-<span class="kw">control</span>:
-  <span class="kw">loop_rate_hz</span>: <span class="num">20</span>
+  <span class="kw">marker_size_m</span>: <span class="num">0.20</span>    <span class="cmt"># default 20cm (per-marker override in marker_map.yaml)</span>
 
 <span class="kw">vision_server</span>:
   <span class="kw">port</span>: <span class="num">8001</span>
 
-<span class="kw">gps_emulation</span>: <span class="num">true</span>     <span class="cmt"># true=GPS_INPUT, false=VISION_POSITION_ESTIMATE</span>
-
 <span class="kw">ekf_origin</span>:
   <span class="kw">lat</span>: <span class="num">52.2297</span>           <span class="cmt"># Warsaw</span>
   <span class="kw">lon</span>: <span class="num">21.0122</span>
-  <span class="kw">alt</span>: <span class="num">100.0</span>
-
-<span class="kw">logging</span>:
-  <span class="kw">level</span>: <span class="str">"INFO"</span></code></pre>
+  <span class="kw">alt</span>: <span class="num">100.0</span>             <span class="cmt"># arbitrary MSL for indoor use</span></code></pre>
 
 <h3>camera_params.yaml</h3>
 <p>Generated by <code>calibrate_camera.py</code> and <code>calibrate_level.py</code>:</p>
@@ -738,18 +733,17 @@ scene_x = -unity_x, scene_y = unity_y, scene_z = unity_z</code></pre>
 <table>
 <tr><th>Issue</th><th>Details</th></tr>
 <tr><td><code>CORNER_REFINE_CONTOUR</code> crash</td><td>Rare assertion error on some frames. Caught by try-except, frame is skipped.</td></tr>
-<tr><td>Detection bottleneck</td><td>ArUco detect takes ~110ms (79% of frame time). Limits FPS to ~6-7.</td></tr>
+<tr><td>Detection bottleneck</td><td>ArUco detect takes ~47ms at 1280x720. Total ~80ms/frame (~11-20 FPS depending on CLAHE and lighting).</td></tr>
 <tr><td>Camera detector ordering</td><td>Detector must be created BEFORE <code>camera.start()</code> — OpenCV thread safety segfault otherwise.</td></tr>
 <tr><td>R_cm unreliable at perpendicular viewing</td><td>IPPE ambiguity. Position uses tvec+IMU angles instead.</td></tr>
-<tr><td>R_CB_NOMINAL det=-1</td><td>Reflection matrix from upward camera. Cannot use in rotation chains for IMU correction.</td></tr>
-<tr><td>18cm markers smaller than A3 originals</td><td>~67px at 3m ceiling — adequate but less detection margin at frame edges.</td></tr>
+<tr><td><code>YAW_DEBUG</code> log line</td><td>Debug matrix computation still runs per-frame in <code>estimate_single()</code>. Benign at INFO level but adds unnecessary work.</td></tr>
 </table>
 
 <h3>Common Problems</h3>
 <table>
 <tr><th>Problem</th><th>Solution</th></tr>
-<tr><td>No heartbeat from FC</td><td>Check wiring (TX/RX swapped?), baud rate (115200), serial protocol (MAVLink2). Use <code>test_mavlink.py</code> to diagnose.</td></tr>
-<tr><td>No markers detected</td><td>Check lighting (too dark/bright), marker size (18cm), distance (&lt;3m), dictionary (DICT_4X4_50). Use <code>test_local_detection.py</code> on a saved frame. Try adjusting camera exposure via CAM panel.</td></tr>
+<tr><td>No heartbeat from FC</td><td>Check wiring (TX/RX swapped?), baud rate (115200), serial protocol (MAVLink2). Use <code>mavlink_debug.py</code> to diagnose.</td></tr>
+<tr><td>No markers detected</td><td>Check lighting (too dark/bright), marker size (20cm), distance (&lt;5m), dictionary (DICT_4X4_50). Use <code>test_local_detection.py</code> on a saved frame. Try adjusting camera exposure via CAM panel in live_map.</td></tr>
 <tr><td>Position drifts</td><td>Improve marker coverage (more markers), recalibrate camera, recalibrate level offset. Check if marker_map.yaml positions match physical positions.</td></tr>
 <tr><td>Yaw always 0 at FC</td><td>Ensure <code>mavlink20=True</code> in connection (MAVLink2 required for GPS_INPUT yaw extension field).</td></tr>
 <tr><td>Position offset when stationary</td><td>Run level calibration. Check <code>orientation</code> value in marker_map.yaml matches physical mounting.</td></tr>
@@ -757,6 +751,28 @@ scene_x = -unity_x, scene_y = unity_y, scene_z = unity_z</code></pre>
 <tr><td>RPi PL011 UART errors</td><td>Normal on RPi — pyserial monkey-patch in <code>mavlink_bridge.py</code> handles it automatically.</td></tr>
 <tr><td>Cannot pip install on RPi</td><td>NixOS uses read-only /nix/store. All deps must be installed via Nix configuration (Pawel manages this).</td></tr>
 </table>
+</section>
+
+<!-- ============================================================ -->
+<section id="gallery">
+<h2>Gallery</h2>
+
+<div style="display:flex;gap:12px;margin:16px 0;flex-wrap:wrap">
+<div style="flex:1;min-width:300px"><img src="images/dev_workspace.png" alt="Development workspace" style="width:100%;border-radius:8px;border:1px solid var(--border)">
+<p style="font-size:11px;color:var(--text2);text-align:center">Full development workspace: GLB viewer, live map, code editor, debug log</p></div>
+<div style="flex:1;min-width:300px"><img src="images/vision_vs_fc.png" alt="Vision vs FC" style="width:100%;border-radius:8px;border:1px solid var(--border)">
+<p style="font-size:11px;color:var(--text2);text-align:center">Vision position (green) vs FC EKF position (orange) comparison</p></div>
+</div>
+
+<div style="display:flex;gap:12px;margin:16px 0;flex-wrap:wrap">
+<div style="flex:1;min-width:300px"><img src="images/detection_live.jpg" alt="Camera detection" style="width:100%;border-radius:8px;border:1px solid var(--border)">
+<p style="font-size:11px;color:var(--text2);text-align:center">Camera view of ceiling-mounted ArUco markers</p></div>
+<div style="flex:1;min-width:300px"><img src="images/detected_marker.jpg" alt="Detected marker" style="width:100%;border-radius:8px;border:1px solid var(--border)">
+<p style="font-size:11px;color:var(--text2);text-align:center">Close-up ArUco marker detection with bounding box</p></div>
+</div>
+
+<!-- TODO: Add flight video, hover test demo, autonomous mission recording -->
+<div class="note"><b>More media coming:</b> Flight test videos, autonomous mission recordings, and hover stability demos will be added here.</div>
 </section>
 
 </main>

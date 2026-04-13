@@ -10,7 +10,7 @@ log = logging.getLogger(__name__)
 
 
 class MAVLinkBridge:
-    def __init__(self, port="/dev/serial0", baud=921600):
+    def __init__(self, port="/dev/ttyS0", baud=115200):
         self.port = port
         self.baud = baud
         self.conn = None
@@ -124,7 +124,7 @@ class MAVLinkBridge:
         return self.conn is not None and (time.time() - self._last_heartbeat) < 3.0
 
     def send_gps_input(self, north, east, down, yaw_deg, origin_lat, origin_lon, origin_alt,
-                       confidence=1.0, horiz_accuracy=0.1):
+                       horiz_accuracy=0.1):
         """Send GPS_INPUT emulating a GPS fix from NED position relative to origin."""
         if not self.conn:
             return

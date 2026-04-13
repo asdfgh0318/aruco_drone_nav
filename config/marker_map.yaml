@@ -92,6 +92,8 @@ markers:
     position: [-2.56, -1.13, 1.19]
     orientation: 0
 
+  # id: 19 — intentionally skipped (no physical marker)
+
   - id: 20
     position: [-2.44, 0.58, 1.19]
     orientation: 0

@@ -57,7 +57,7 @@ debug_*.jpg
 *.img.xz
 *.tar.gz
 
-# Generated markers (can be regenerated)
+# Generated markers (root level — subdirs covered below)
 markers/*.png
 markers/*.pdf
 
@@ -71,6 +71,22 @@ flight_log.txt
 # OS files
 .DS_Store
 Thumbs.db
+
+# Large data files
+*.glb
+*.zip
+*.BIN
+*.csv
+sdcard_backup/
+buildroot/
+Copter-*/
+
+# Generated markers (can be regenerated, including subdirs)
+markers/**/*.png
+markers/**/*.pdf
+
+# Saved reference docs
+docs/mavproxy.html
 
 # Keep empty directories
 !recordings/.gitkeep

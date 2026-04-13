@@ -388,7 +388,7 @@ def estimate_single(detection, marker_cfg, imu_attitude=None):
     return pos, yaw_compass
 
 
-def estimate_position(detections, marker_map, last_state, cam_matrix, imu_attitude=None):
+def estimate_position(detections, marker_map, last_state, imu_attitude=None):
     valid = [(d, marker_map[str(d.marker_id)]) for d in detections if str(d.marker_id) in marker_map]
     if not valid:
         return last_state
@@ -660,7 +660,6 @@ def main():
 
     try:
         while not shutdown[0]:
-            t_start = time.time()
             frame, frame_time = camera.get_frame()
             if frame is None:
                 time.sleep(0.01)
@@ -678,7 +677,7 @@ def main():
             if dets:
                 detections_count += 1
                 imu = mavlink.attitude if mavlink else None
-                state = estimate_position(dets, marker_map, last_state, cam_matrix, imu_attitude=imu)
+                state = estimate_position(dets, marker_map, last_state, imu_attitude=imu)
                 if state is not None:
                     last_state = state
                 # Log raw data
@@ -703,7 +702,6 @@ def main():
                     north=state.n, east=state.e, down=state.d,
                     yaw_deg=state.yaw, origin_lat=origin_lat,
                     origin_lon=origin_lon, origin_alt=origin_alt,
-                    confidence=state.confidence,
                     horiz_accuracy=hacc)
 
             if args.mode in ("test", "run"):
